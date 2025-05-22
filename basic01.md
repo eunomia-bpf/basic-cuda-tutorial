@@ -2,6 +2,8 @@
 
 This document provides a detailed explanation of the vector addition CUDA example in `basic01.cu`.
 
+You can find the code in <https://github.com/eunomia-bpf/basic-cuda-tutorial>
+
 ## Prerequisites
 
 To run this example, you need:

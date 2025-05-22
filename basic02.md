@@ -2,6 +2,8 @@
 
 This example demonstrates how to use CUDA PTX (Parallel Thread Execution) inline assembly in your CUDA programs. PTX is NVIDIA's low-level parallel thread execution virtual machine and instruction set architecture (ISA).
 
+You can find the code in <https://github.com/eunomia-bpf/basic-cuda-tutorial>
+
 ## What is PTX?
 
 PTX is an intermediate assembly language that provides a stable programming model and instruction set for CUDA programs. It serves several purposes:

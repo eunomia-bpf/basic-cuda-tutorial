@@ -2,6 +2,8 @@
 
 This tutorial explores efficient implementation of convolutional operations on GPUs using CUDA with a focus on shared memory optimization. Convolutional Neural Networks (CNNs) are a cornerstone of modern deep learning for computer vision, and the convolution operation accounts for the majority of their computational workload. This makes it a prime target for GPU acceleration.
 
+You can find the code in <https://github.com/eunomia-bpf/basic-cuda-tutorial>
+
 ## Table of Contents
 
 1. [Introduction to Convolutional Neural Networks](#introduction-to-convolutional-neural-networks)

@@ -2,6 +2,8 @@
 
 This tutorial demonstrates how to implement efficient attention mechanisms for transformer models using CUDA. The attention mechanism is a cornerstone of modern natural language processing models, enabling transformers to selectively focus on different parts of the input sequence.
 
+You can find the code in <https://github.com/eunomia-bpf/basic-cuda-tutorial>
+
 ## Table of Contents
 
 1. [Introduction to Attention Mechanisms](#introduction-to-attention-mechanisms)

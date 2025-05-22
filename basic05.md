@@ -2,6 +2,8 @@
 
 This tutorial demonstrates how to implement a basic neural network forward pass on a GPU using CUDA. Neural networks are at the core of deep learning and have revolutionized fields like computer vision, natural language processing, and reinforcement learning. GPUs are particularly well-suited for neural network computation due to their ability to perform massive parallel computations.
 
+You can find the code in <https://github.com/eunomia-bpf/basic-cuda-tutorial>
+
 ## Table of Contents
 
 1. [Introduction to Neural Networks on GPU](#introduction-to-neural-networks-on-gpu)

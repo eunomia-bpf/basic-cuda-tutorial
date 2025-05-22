@@ -2,6 +2,8 @@
 
 This example demonstrates and compares different approaches to GPU programming using CUDA, focusing on a matrix multiplication problem. By implementing the same algorithm using various techniques, we can understand the trade-offs between programming complexity, performance, and code maintainability.
 
+You can find the code in <https://github.com/eunomia-bpf/basic-cuda-tutorial>
+
 ## Overview
 
 Matrix multiplication is a classic problem that benefits greatly from parallelization. This example implements a simple matrix multiplication C = A × B using seven different approaches:

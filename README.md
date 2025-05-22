@@ -1,4 +1,6 @@
-# cuda-exp
+# basic-cuda-tutorial
+
+You can find the code in <https://github.com/eunomia-bpf/basic-cuda-tutorial>
 
 A collection of CUDA programming examples to learn GPU programming with NVIDIA CUDA.
 
