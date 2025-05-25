@@ -15,9 +15,6 @@ make sure change the gpu architecture `sm_61` to your own gpu architecture in Ma
 - **basic05.cu** and [basic05.md](basic05.md): Implementing a basic neural network forward pass on GPU with CUDA
 - **basic06.cu** and [basic06.md](basic06.md): GPU-accelerated convolution operations for CNN with shared memory optimization
 - **basic07.cu** and [basic07.md](basic07.md): CUDA implementation of attention mechanism for transformer models
-
-## Upcoming ML/AI GPU Tutorials
-
-- **basic08.cu**: Mixed-precision training with Tensor Cores using CUDA
+- **basic08.cu** and [basic08.md](basic08.md): Profiling and tracing CUDA applications with CUDA Events, NVTX, and CUPTI for performance optimization
 
 Each tutorial will include comprehensive documentation explaining the concepts, implementation details, and optimization techniques used in ML/AI workloads on GPUs.

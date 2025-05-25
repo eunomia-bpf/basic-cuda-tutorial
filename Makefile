@@ -1,8 +1,23 @@
 NVCC = nvcc
-NVCC_FLAGS = -O3 -arch=sm_61
-NVCC_DP_FLAGS = -O3 -arch=sm_61 -rdc=true
 
-all: basic01 basic02 basic03 basic04 basic05 basic06 basic07
+# Auto-detect GPU architecture
+ARCH := $(shell $(NVCC) -run ./detect_arch.cu 2>/dev/null || echo "sm_61")
+
+NVCC_FLAGS = -O3 -arch=$(ARCH)
+NVCC_DP_FLAGS = -O3 -arch=$(ARCH) -rdc=true
+NVCC_PROF_FLAGS = -O3 -arch=$(ARCH) -lcupti -lnvToolsExt
+
+.PHONY: all clean detect_arch
+
+all: detect_arch basic01 basic02 basic03 basic04 basic05 basic06 basic07 basic08
+
+detect_arch:
+	@echo "Detected GPU architecture: $(ARCH)"
+	@if [ "$(ARCH)" = "sm_61" ]; then \
+		echo "Using default sm_61 architecture. To use actual GPU architecture:"; \
+		echo "1. Create detect_arch.cu with the code to detect architecture"; \
+		echo "2. Or manually set architecture in Makefile"; \
+	fi
 
 basic01: basic01.cu
 	$(NVCC) $(NVCC_FLAGS) -o basic01 basic01.cu
@@ -25,5 +40,8 @@ basic06: basic06.cu
 basic07: basic07.cu
 	$(NVCC) $(NVCC_FLAGS) -o basic07 basic07.cu
 
+basic08: basic08.cu
+	$(NVCC) $(NVCC_PROF_FLAGS) -o basic08 basic08.cu
+
 clean:
-	rm -f basic01 basic02 basic03 basic04 basic05 basic06 basic07 
+	rm -f basic01 basic02 basic03 basic04 basic05 basic06 basic07 basic08 
