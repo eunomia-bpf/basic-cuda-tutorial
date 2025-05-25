@@ -62,3 +62,21 @@ dkms.conf
 08-profiling-tracing
 09-gpu-extension
 10-cpu-gpu-profiling-boundaries
+11-fine-grained-gpu-modifications
+
+# Other common files to ignore
+a.out
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.ptx
+*.cubin
+.vscode/
+.vs/
+build/
+*.swp
+*~
