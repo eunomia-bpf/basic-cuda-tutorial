@@ -10,7 +10,7 @@ NVCC_EXT_FLAGS = -O3 -arch=$(ARCH) -ldl -lpthread
 
 .PHONY: all clean detect_arch
 
-all: detect_arch basic01 basic02 basic03 basic04 basic05 basic06 basic07 basic08 basic09
+all: detect_arch 01-vector-addition 02-ptx-assembly 03-gpu-programming-methods 04-gpu-architecture 05-neural-network 06-cnn-convolution 07-attention-mechanism 08-profiling-tracing 09-gpu-extension
 
 detect_arch:
 	@echo "Detected GPU architecture: $(ARCH)"
@@ -20,32 +20,32 @@ detect_arch:
 		echo "2. Or manually set architecture in Makefile"; \
 	fi
 
-basic01: basic01.cu
-	$(NVCC) $(NVCC_FLAGS) -o basic01 basic01.cu
+01-vector-addition: 01-vector-addition.cu
+	$(NVCC) $(NVCC_FLAGS) -o 01-vector-addition 01-vector-addition.cu
 
-basic02: basic02.cu
-	$(NVCC) $(NVCC_FLAGS) -o basic02 basic02.cu
+02-ptx-assembly: 02-ptx-assembly.cu
+	$(NVCC) $(NVCC_FLAGS) -o 02-ptx-assembly 02-ptx-assembly.cu
 
-basic03: basic03.cu
-	$(NVCC) $(NVCC_DP_FLAGS) -o basic03 basic03.cu
+03-gpu-programming-methods: 03-gpu-programming-methods.cu
+	$(NVCC) $(NVCC_DP_FLAGS) -o 03-gpu-programming-methods 03-gpu-programming-methods.cu
 
-basic04: basic04.cu
-	$(NVCC) $(NVCC_FLAGS) -o basic04 basic04.cu
+04-gpu-architecture: 04-gpu-architecture.cu
+	$(NVCC) $(NVCC_FLAGS) -o 04-gpu-architecture 04-gpu-architecture.cu
 
-basic05: basic05.cu
-	$(NVCC) $(NVCC_FLAGS) -o basic05 basic05.cu
+05-neural-network: 05-neural-network.cu
+	$(NVCC) $(NVCC_FLAGS) -o 05-neural-network 05-neural-network.cu
 
-basic06: basic06.cu
-	$(NVCC) $(NVCC_FLAGS) -o basic06 basic06.cu
+06-cnn-convolution: 06-cnn-convolution.cu
+	$(NVCC) $(NVCC_FLAGS) -o 06-cnn-convolution 06-cnn-convolution.cu
 
-basic07: basic07.cu
-	$(NVCC) $(NVCC_FLAGS) -o basic07 basic07.cu
+07-attention-mechanism: 07-attention-mechanism.cu
+	$(NVCC) $(NVCC_FLAGS) -o 07-attention-mechanism 07-attention-mechanism.cu
 
-basic08: basic08.cu
-	$(NVCC) $(NVCC_PROF_FLAGS) -o basic08 basic08.cu
+08-profiling-tracing: 08-profiling-tracing.cu
+	$(NVCC) $(NVCC_PROF_FLAGS) -o 08-profiling-tracing 08-profiling-tracing.cu
 
-basic09: basic09.cu
-	$(NVCC) $(NVCC_EXT_FLAGS) -o basic09 basic09.cu
+09-gpu-extension: 09-gpu-extension.cu
+	$(NVCC) $(NVCC_EXT_FLAGS) -o 09-gpu-extension 09-gpu-extension.cu
 
 clean:
-	rm -f basic01 basic02 basic03 basic04 basic05 basic06 basic07 basic08 basic09 
+	rm -f 01-vector-addition 02-ptx-assembly 03-gpu-programming-methods 04-gpu-architecture 05-neural-network 06-cnn-convolution 07-attention-mechanism 08-profiling-tracing 09-gpu-extension 

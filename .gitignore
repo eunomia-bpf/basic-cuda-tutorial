@@ -51,12 +51,13 @@ Module.symvers
 Mkfile.old
 dkms.conf
 
-basic01
-basic02
-basic03
-basic04
-basic05
-basic06
-basic07
-basic08
-basic09
+# CUDA examples compiled binaries
+01-vector-addition
+02-ptx-assembly
+03-gpu-programming-methods
+04-gpu-architecture
+05-neural-network
+06-cnn-convolution
+07-attention-mechanism
+08-profiling-tracing
+09-gpu-extension
