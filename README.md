@@ -16,5 +16,6 @@ make sure change the gpu architecture `sm_61` to your own gpu architecture in Ma
 - **basic06.cu** and [basic06.md](basic06.md): GPU-accelerated convolution operations for CNN with shared memory optimization
 - **basic07.cu** and [basic07.md](basic07.md): CUDA implementation of attention mechanism for transformer models
 - **basic08.cu** and [basic08.md](basic08.md): Profiling and tracing CUDA applications with CUDA Events, NVTX, and CUPTI for performance optimization
+- **basic09.cu** and [basic09.md](basic09.md): GPU application extension mechanisms for modifying behavior without source code changes, including API interception, memory management, kernel optimization, and error resilience
 
 Each tutorial will include comprehensive documentation explaining the concepts, implementation details, and optimization techniques used in ML/AI workloads on GPUs.

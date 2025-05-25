@@ -6,10 +6,11 @@ ARCH := $(shell $(NVCC) -run ./detect_arch.cu 2>/dev/null || echo "sm_61")
 NVCC_FLAGS = -O3 -arch=$(ARCH)
 NVCC_DP_FLAGS = -O3 -arch=$(ARCH) -rdc=true
 NVCC_PROF_FLAGS = -O3 -arch=$(ARCH) -lcupti -lnvToolsExt
+NVCC_EXT_FLAGS = -O3 -arch=$(ARCH) -ldl -lpthread
 
 .PHONY: all clean detect_arch
 
-all: detect_arch basic01 basic02 basic03 basic04 basic05 basic06 basic07 basic08
+all: detect_arch basic01 basic02 basic03 basic04 basic05 basic06 basic07 basic08 basic09
 
 detect_arch:
 	@echo "Detected GPU architecture: $(ARCH)"
@@ -43,5 +44,8 @@ basic07: basic07.cu
 basic08: basic08.cu
 	$(NVCC) $(NVCC_PROF_FLAGS) -o basic08 basic08.cu
 
+basic09: basic09.cu
+	$(NVCC) $(NVCC_EXT_FLAGS) -o basic09 basic09.cu
+
 clean:
-	rm -f basic01 basic02 basic03 basic04 basic05 basic06 basic07 basic08 
+	rm -f basic01 basic02 basic03 basic04 basic05 basic06 basic07 basic08 basic09 
