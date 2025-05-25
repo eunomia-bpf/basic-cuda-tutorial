@@ -17,6 +17,6 @@ Make sure to change the gpu architecture `sm_61` to your own gpu architecture in
 - **07-attention-mechanism.cu** and [07-attention-mechanism.md](07-attention-mechanism.md): CUDA implementation of attention mechanism for transformer models
 - **08-profiling-tracing.cu** and [08-profiling-tracing.md](08-profiling-tracing.md): Profiling and tracing CUDA applications with CUDA Events, NVTX, and CUPTI for performance optimization
 - **09-gpu-extension.cu** and [09-gpu-extension.md](09-gpu-extension.md): GPU application extension mechanisms for modifying behavior without source code changes, including API interception, memory management, kernel optimization, and error resilience
-- [10-cpu-gpu-profiling-boundaries.md](10-cpu-gpu-profiling-boundaries.md): Analysis of CPU and GPU profiling boundaries, exploring which operations to measure on CPUs vs GPUs and utilizing techniques like eBPF for function hooking
+- **10-cpu-gpu-profiling-boundaries.cu** and [10-cpu-gpu-profiling-boundaries.md](10-cpu-gpu-profiling-boundaries.md): Advanced GPU kernel instrumentation techniques demonstrating fine-grained internal timing, divergent path analysis, dynamic workload profiling, and adaptive algorithm selection within CUDA kernels
 
 Each tutorial includes comprehensive documentation explaining the concepts, implementation details, and optimization techniques used in ML/AI workloads on GPUs.

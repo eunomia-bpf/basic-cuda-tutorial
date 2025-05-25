@@ -61,3 +61,4 @@ dkms.conf
 07-attention-mechanism
 08-profiling-tracing
 09-gpu-extension
+10-cpu-gpu-profiling-boundaries
