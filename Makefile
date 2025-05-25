@@ -10,7 +10,7 @@ NVCC_EXT_FLAGS = -O3 -arch=$(ARCH) -ldl -lpthread
 
 .PHONY: all clean detect_arch
 
-all: detect_arch 01-vector-addition 02-ptx-assembly 03-gpu-programming-methods 04-gpu-architecture 05-neural-network 06-cnn-convolution 07-attention-mechanism 08-profiling-tracing 09-gpu-extension 10-cpu-gpu-profiling-boundaries 11-fine-grained-gpu-modifications
+all: detect_arch 01-vector-addition 02-ptx-assembly 03-gpu-programming-methods 04-gpu-architecture 05-neural-network 06-cnn-convolution 07-attention-mechanism 08-profiling-tracing 09-gpu-extension 10-cpu-gpu-profiling-boundaries 11-fine-grained-gpu-modifications 12-advanced-gpu-customizations
 
 detect_arch:
 	@echo "Detected GPU architecture: $(ARCH)"
@@ -53,5 +53,8 @@ detect_arch:
 11-fine-grained-gpu-modifications: 11-fine-grained-gpu-modifications.cu
 	$(NVCC) $(NVCC_EXT_FLAGS) -o 11-fine-grained-gpu-modifications 11-fine-grained-gpu-modifications.cu
 
+12-advanced-gpu-customizations: 12-advanced-gpu-customizations.cu
+	$(NVCC) $(NVCC_EXT_FLAGS) -o 12-advanced-gpu-customizations 12-advanced-gpu-customizations.cu
+
 clean:
-	rm -f 01-vector-addition 02-ptx-assembly 03-gpu-programming-methods 04-gpu-architecture 05-neural-network 06-cnn-convolution 07-attention-mechanism 08-profiling-tracing 09-gpu-extension 10-cpu-gpu-profiling-boundaries 11-fine-grained-gpu-modifications 
+	rm -f 01-vector-addition 02-ptx-assembly 03-gpu-programming-methods 04-gpu-architecture 05-neural-network 06-cnn-convolution 07-attention-mechanism 08-profiling-tracing 09-gpu-extension 10-cpu-gpu-profiling-boundaries 11-fine-grained-gpu-modifications 12-advanced-gpu-customizations 

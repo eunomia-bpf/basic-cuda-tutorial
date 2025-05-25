@@ -63,6 +63,7 @@ dkms.conf
 09-gpu-extension
 10-cpu-gpu-profiling-boundaries
 11-fine-grained-gpu-modifications
+12-advanced-gpu-customizations
 
 # Other common files to ignore
 a.out
