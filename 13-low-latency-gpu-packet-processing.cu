@@ -29,7 +29,6 @@
 #include "packet_processing_common.h"
 #include "packet_processing_kernels.cuh"
 #include "packet_processing_batch.cuh"
-#include "persistent_kernel.cuh"
 
 // Error checking macro
 #define CHECK_CUDA_ERROR(call) \
@@ -463,8 +462,167 @@ long long runZeroCopyProcessing(int batchSize) {
  * processing with CPU-GPU synchronization and dynamic batch handling.
  ******************************************************************************/
 
+// Work queue structure for persistent kernel (based on 12-advanced-gpu-customizations.cu)
+struct PacketWorkQueue {
+    int items[NUM_PACKETS];    // Work items (packet indices)
+    int head;                  // Current head of queue (atomic)
+    int tail;                  // Current tail of queue
+    int finished;              // Flag to indicate all work is done
+};
+
+// True persistent kernel that continuously grabs work items
+__global__ void persistentPacketKernel(Packet* packets, PacketResult* results, 
+                                      PacketWorkQueue* queue, int totalPackets) {
+    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    // Keep thread alive to process multiple items
+    while (true) {
+        // Atomically grab next work item
+        int work_idx = atomicAdd(&queue->head, 1);
+        
+        // Check if we've processed all items
+        if (work_idx >= totalPackets || work_idx >= queue->tail) {
+            break;
+        }
+        
+        // Get the packet index to process
+        int packetIdx = queue->items[work_idx];
+        
+        // Validate packet index
+        if (packetIdx < 0 || packetIdx >= totalPackets) {
+            continue;
+        }
+        
+        // Process the packet
+        Packet* packet = &packets[packetIdx];
+        PacketResult* result = &results[packetIdx];
+        
+        // Mark packet as being processed
+        packet->status = PROCESSING;
+        
+        // Call the core packet processing function
+        processPacketGPU(packet, result, packetIdx);
+        
+        // Mark packet as completed
+        packet->status = COMPLETED;
+    }
+}
+
 long long runPersistentKernelProcessing(int batchSize) {
-    return ::runPersistentKernelProcessing(batchSize, g_test_packets, g_test_results);
+    PerformanceMetrics metrics = {0};
+    metrics.batchSize = NUM_PACKETS;
+    metrics.numBatches = 1;
+    
+    printf("Starting true persistent kernel processing (like 12-advanced-gpu-customizations.cu)...\n");
+    printf("Processing all %d packets with persistent threads\n", NUM_PACKETS);
+    
+    // Reset packet status
+    resetPacketStatus();
+    
+    // Allocate and initialize host work queue
+    PacketWorkQueue* h_queue = (PacketWorkQueue*)malloc(sizeof(PacketWorkQueue));
+    
+    // Initialize work queue with all packet indices
+    for (int i = 0; i < NUM_PACKETS; i++) {
+        h_queue->items[i] = i;
+    }
+    h_queue->head = 0;
+    h_queue->tail = NUM_PACKETS;
+    h_queue->finished = 0;
+    
+    // Allocate device memory
+    Packet* d_packets;
+    PacketResult* d_results;
+    PacketWorkQueue* d_queue;
+    
+    CHECK_CUDA_ERROR(cudaMalloc(&d_packets, NUM_PACKETS * sizeof(Packet)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_results, NUM_PACKETS * sizeof(PacketResult)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_queue, sizeof(PacketWorkQueue)));
+    
+    // Copy data to device
+    CHECK_CUDA_ERROR(cudaMemcpy(d_packets, g_test_packets, 
+                     NUM_PACKETS * sizeof(Packet), cudaMemcpyHostToDevice));
+    CHECK_CUDA_ERROR(cudaMemcpy(d_queue, h_queue, 
+                     sizeof(PacketWorkQueue), cudaMemcpyHostToDevice));
+    
+    // Launch persistent kernel with fewer threads since each handles multiple items
+    dim3 blockDim(256);
+    dim3 gridDim(32);  // Use fewer blocks for persistent threads (like the example)
+    
+    printf("Launching persistent kernel with %d blocks x %d threads...\n", 
+           gridDim.x, blockDim.x);
+    
+    // Start timing
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    // Launch the persistent kernel
+    persistentPacketKernel<<<gridDim, blockDim>>>(d_packets, d_results, d_queue, NUM_PACKETS);
+    
+    // Check for launch errors
+    cudaError_t launchError = cudaGetLastError();
+    if (launchError != cudaSuccess) {
+        printf("Persistent kernel launch failed: %s\n", cudaGetErrorString(launchError));
+        free(h_queue);
+        cudaFree(d_packets);
+        cudaFree(d_results);
+        cudaFree(d_queue);
+        return -1;
+    }
+    
+    // Wait for completion
+    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+    
+    // End timing
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    printf("Persistent kernel completed, copying results...\n");
+    
+    // Copy results back to host
+    CHECK_CUDA_ERROR(cudaMemcpy(g_test_results, d_results, 
+                     NUM_PACKETS * sizeof(PacketResult), cudaMemcpyDeviceToHost));
+    
+    // Copy queue back to check completion
+    CHECK_CUDA_ERROR(cudaMemcpy(h_queue, d_queue, 
+                     sizeof(PacketWorkQueue), cudaMemcpyDeviceToHost));
+    
+    printf("Work queue head: %d, tail: %d\n", h_queue->head, h_queue->tail);
+    
+    // Calculate statistics
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Store metrics
+    metrics.totalTime = duration;
+    metrics.avgPacketLatency = (double)duration / NUM_PACKETS;
+    
+    // Print performance metrics
+    char stageTitle[100];
+    snprintf(stageTitle, sizeof(stageTitle), "Stage 5: True Persistent Kernel");
+    printPerformanceMetrics(stageTitle, metrics);
+    
+    printf("Persistent kernel processing completed successfully\n");
+    
+    // Verify results
+    bool resultsValid = true;
+    for (int i = 0; i < NUM_PACKETS; i++) {
+        if (g_test_packets[i].status != COMPLETED) {
+            printf("Warning: Packet %d not completed (status: %d)\n", i, g_test_packets[i].status);
+            resultsValid = false;
+            break;
+        }
+    }
+    
+    printf("Results verification: %s\n", resultsValid ? "PASSED" : "FAILED");
+    
+    // Cleanup
+    free(h_queue);
+    CHECK_CUDA_ERROR(cudaFree(d_packets));
+    CHECK_CUDA_ERROR(cudaFree(d_results));
+    CHECK_CUDA_ERROR(cudaFree(d_queue));
+    
+    printf("True persistent kernel processing (total): %lld us\n", duration);
+    
+    return duration;
 }
 
 /******************************************************************************
