@@ -11,6 +11,8 @@
  * 3. Stream concurrency for operation overlap
  * 4. Persistent kernels to eliminate launch overhead
  * 5. CUDA Graphs for reduced CPU overhead
+ * 
+ * This implementation includes batch size exploration to find optimal batch sizes.
  */
 
 #include <stdio.h>
@@ -24,6 +26,9 @@
 #include <random>
 #include <mutex>
 #include <condition_variable>
+#include "packet_processing_common.h"
+#include "packet_processing_kernels.cuh"
+#include "packet_processing_batch.cuh"
 
 // Error checking macro
 #define CHECK_CUDA_ERROR(call) \
@@ -36,271 +41,184 @@ do { \
     } \
 } while(0)
 
-// Timing utilities
-#define START_TIMER auto start = std::chrono::high_resolution_clock::now();
-#define STOP_TIMER(name) do { \
-    auto end = std::chrono::high_resolution_clock::now(); \
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count(); \
-    printf("%s: %lld us\n", name, duration); \
-} while(0)
+// Global test data - generate once and reuse
+Packet* g_test_packets = nullptr;
+PacketResult* g_test_results = nullptr;
 
-// Packet processing constants
-#define MAX_PACKET_SIZE 1500         // Maximum Ethernet packet size
-#define PACKET_HEADER_SIZE 42        // Ethernet + IP + TCP headers
-#define BATCH_SIZE 256               // Number of packets per batch
-#define MAX_BATCHES 10               // Maximum number of batches in flight
-#define NUM_PACKETS 10000            // Total packets to process
-#define NUM_STREAMS 4                // Number of CUDA streams to use
+// Function prototypes
+long long runCPUProcessing();
+long long runBasicProcessing();
+long long runPinnedMemoryProcessing(int batchSize);
+long long runBatchedStreamProcessing(int batchSize);
+long long runZeroCopyProcessing(int batchSize);
+long long runPersistentKernelProcessing(int batchSize);
+long long runCudaGraphsProcessing(int batchSize);
 
-// Status codes for packet processing
-enum PacketStatus {
-    PENDING = 0,
-    PROCESSING = 1,
-    COMPLETED = 2,
-    ERROR = 3
-};
-
-// Simple packet structure
-struct Packet {
-    unsigned char header[PACKET_HEADER_SIZE];  // Ethernet + IP + TCP headers
-    unsigned char payload[MAX_PACKET_SIZE - PACKET_HEADER_SIZE];
-    int size;
-    int status;
-};
-
-// Batch of packets
-struct PacketBatch {
-    Packet packets[BATCH_SIZE];
-    int count;
-    int status;
-    volatile int ready;
-};
-
-// Results from packet processing
-struct PacketResult {
-    int packetId;
-    int action;  // 0 = drop, 1 = forward, 2 = modify
-    int matches; // Number of pattern matches found
-};
-
-// Global state for persistent kernel
-struct GlobalState {
-    volatile int batchesReady;
-    volatile int batchesCompleted;
-    volatile int shutdown;
-};
-
-// Simple packet generator for testing
-void generateTestPackets(Packet* packets, int numPackets) {
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<> dis(64, MAX_PACKET_SIZE);
+// Initialize global test data
+void initializeTestData() {
+    // Allocate memory for global test packets and results
+    g_test_packets = (Packet*)malloc(NUM_PACKETS * sizeof(Packet));
+    g_test_results = (PacketResult*)malloc(NUM_PACKETS * sizeof(PacketResult));
     
-    for (int i = 0; i < numPackets; i++) {
-        // Generate random header (first 42 bytes)
-        for (int j = 0; j < PACKET_HEADER_SIZE; j++) {
-            packets[i].header[j] = rand() % 256;
-        }
-        
-        // Set source and destination IP addresses for easy identification
-        // Source IP in header bytes 26-29
-        packets[i].header[26] = 10;
-        packets[i].header[27] = 0;
-        packets[i].header[28] = 0;
-        packets[i].header[29] = 1;
-        
-        // Destination IP in header bytes 30-33
-        packets[i].header[30] = 10;
-        packets[i].header[31] = 0;
-        packets[i].header[32] = 0;
-        packets[i].header[33] = 2;
-        
-        // Random payload
-        int payloadSize = dis(gen) - PACKET_HEADER_SIZE;
-        for (int j = 0; j < payloadSize; j++) {
-            packets[i].payload[j] = rand() % 256;
-        }
-        
-        packets[i].size = PACKET_HEADER_SIZE + payloadSize;
-        packets[i].status = PENDING;
+    // Generate test packets once
+    generateTestPackets(g_test_packets, NUM_PACKETS);
+}
+
+// Clean up global test data
+void cleanupTestData() {
+    if (g_test_packets) {
+        free(g_test_packets);
+        g_test_packets = nullptr;
     }
+    
+    if (g_test_results) {
+        free(g_test_results);
+        g_test_results = nullptr;
+    }
+}
+
+// Helper to copy test packets to a destination buffer
+void copyTestPackets(Packet* dest, int startIdx, int count) {
+    memcpy(dest, &g_test_packets[startIdx], count * sizeof(Packet));
 }
 
 /******************************************************************************
- * Stage 1: Basic Packet Processing
+ * Stage 0: CPU-based Processing (Baseline)
  * 
- * This is a simple implementation that:
- * - Transfers packets from host to device
- * - Processes them on the GPU
- * - Transfers results back
- * 
- * This serves as our baseline implementation.
+ * This is a simple CPU implementation for comparison purposes.
  ******************************************************************************/
 
-// Kernel for basic packet processing
-__global__ void processPacketsBasic(Packet* packets, PacketResult* results, int numPackets) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
+long long runCPUProcessing() {
+    PerformanceMetrics metrics = {0};
+    metrics.batchSize = NUM_PACKETS;  // Process all packets at once
     
-    if (tid < numPackets) {
-        Packet* packet = &packets[tid];
-        PacketResult* result = &results[tid];
-        
-        // Extract packet information (just for demonstration)
-        result->packetId = tid;
-        result->matches = 0;
-        
-        // Simple pattern matching - count occurrences of byte value 0x42
-        for (int i = 0; i < packet->size - PACKET_HEADER_SIZE; i++) {
-            if (packet->payload[i] == 0x42) {
-                result->matches++;
-            }
-        }
-        
-        // Decision logic - just an example
-        if (result->matches > 5) {
-            result->action = 0;  // Drop
-        } else if (result->matches > 0) {
-            result->action = 2;  // Modify
-        } else {
-            result->action = 1;  // Forward
-        }
-        
-        // Mark packet as processed
-        packet->status = COMPLETED;
-    }
-}
-
-void runBasicProcessing() {
-    printf("\n=== Stage 1: Basic Packet Processing ===\n");
+    // Reset packet status
+    resetPacketStatus();
     
-    // Allocate host memory for packets and results
-    Packet* h_packets = (Packet*)malloc(NUM_PACKETS * sizeof(Packet));
-    PacketResult* h_results = (PacketResult*)malloc(NUM_PACKETS * sizeof(PacketResult));
+    // Measure CPU performance
+    auto start = std::chrono::high_resolution_clock::now();
     
-    // Generate test packets
-    generateTestPackets(h_packets, NUM_PACKETS);
-    
-    // Allocate device memory
-    Packet* d_packets;
-    PacketResult* d_results;
-    CHECK_CUDA_ERROR(cudaMalloc(&d_packets, NUM_PACKETS * sizeof(Packet)));
-    CHECK_CUDA_ERROR(cudaMalloc(&d_results, NUM_PACKETS * sizeof(PacketResult)));
-    
-    // Measure baseline performance
-    START_TIMER
-    
-    // Copy packets to device
-    CHECK_CUDA_ERROR(cudaMemcpy(d_packets, h_packets, NUM_PACKETS * sizeof(Packet), 
-                     cudaMemcpyHostToDevice));
-    
-    // Launch kernel
-    int blockSize = 256;
-    int numBlocks = (NUM_PACKETS + blockSize - 1) / blockSize;
-    processPacketsBasic<<<numBlocks, blockSize>>>(d_packets, d_results, NUM_PACKETS);
-    
-    // Wait for kernel to finish
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-    
-    // Copy results back to host
-    CHECK_CUDA_ERROR(cudaMemcpy(h_results, d_results, NUM_PACKETS * sizeof(PacketResult), 
-                     cudaMemcpyDeviceToHost));
-    
-    STOP_TIMER("Basic processing (total)");
-    
-    // Print some results
-    int drops = 0, forwards = 0, modifies = 0;
+    // Process packets on CPU
     for (int i = 0; i < NUM_PACKETS; i++) {
-        switch (h_results[i].action) {
-            case 0: drops++; break;
-            case 1: forwards++; break;
-            case 2: modifies++; break;
-        }
+        processPacketCPU(&g_test_packets[i], &g_test_results[i], i);
+        g_test_packets[i].status = COMPLETED;
     }
     
-    printf("Processed %d packets: %d drops, %d forwards, %d modifies\n", 
-           NUM_PACKETS, drops, forwards, modifies);
+    auto end = std::chrono::high_resolution_clock::now();
+    metrics.totalTime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    printf("CPU processing (total): %lld us\n", metrics.totalTime);
     
-    // Cleanup
-    free(h_packets);
-    free(h_results);
-    CHECK_CUDA_ERROR(cudaFree(d_packets));
-    CHECK_CUDA_ERROR(cudaFree(d_results));
+    // Calculate statistics
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Print performance metrics
+    printPerformanceMetrics("Stage 0: CPU-based Processing (Baseline)", metrics);
+    
+    return metrics.totalTime;
 }
 
 /******************************************************************************
  * Stage 2: Pinned Memory Optimization
  * 
- * This version uses pinned memory to improve transfer speeds between
- * host and device, which is critical for low-latency processing.
+ * This version uses pinned memory for faster host-device transfers.
  ******************************************************************************/
 
-void runPinnedMemoryProcessing() {
-    printf("\n=== Stage 2: Pinned Memory Optimization ===\n");
+long long runPinnedMemoryProcessing(int batchSize) {
+    PerformanceMetrics metrics = {0};
+    metrics.batchSize = batchSize;
+    metrics.numBatches = (NUM_PACKETS + batchSize - 1) / batchSize;
     
-    // Allocate pinned memory for packets and results
-    Packet* h_packets;
-    PacketResult* h_results;
-    CHECK_CUDA_ERROR(cudaHostAlloc(&h_packets, NUM_PACKETS * sizeof(Packet), 
-                     cudaHostAllocDefault));
-    CHECK_CUDA_ERROR(cudaHostAlloc(&h_results, NUM_PACKETS * sizeof(PacketResult), 
-                     cudaHostAllocDefault));
+    // Reset packet status
+    resetPacketStatus();
     
-    // Generate test packets
-    generateTestPackets(h_packets, NUM_PACKETS);
+    // Allocate pinned memory for host
+    Packet* h_pinned_packets;
+    PacketResult* h_pinned_results;
+    
+    CHECK_CUDA_ERROR(cudaHostAlloc(&h_pinned_packets, batchSize * sizeof(Packet), 
+                     cudaHostAllocDefault));
+    CHECK_CUDA_ERROR(cudaHostAlloc(&h_pinned_results, batchSize * sizeof(PacketResult), 
+                     cudaHostAllocDefault));
     
     // Allocate device memory
     Packet* d_packets;
     PacketResult* d_results;
-    CHECK_CUDA_ERROR(cudaMalloc(&d_packets, NUM_PACKETS * sizeof(Packet)));
-    CHECK_CUDA_ERROR(cudaMalloc(&d_results, NUM_PACKETS * sizeof(PacketResult)));
     
-    // Measure performance with pinned memory
-    START_TIMER
+    CHECK_CUDA_ERROR(cudaMalloc(&d_packets, batchSize * sizeof(Packet)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_results, batchSize * sizeof(PacketResult)));
     
-    // Measure transfer time separately
-    auto transfer_start = std::chrono::high_resolution_clock::now();
+    // Measure performance
+    auto start = std::chrono::high_resolution_clock::now();
     
-    // Copy packets to device
-    CHECK_CUDA_ERROR(cudaMemcpy(d_packets, h_packets, NUM_PACKETS * sizeof(Packet), 
-                     cudaMemcpyHostToDevice));
+    long long total_transfer_time = 0;
+    long long total_kernel_time = 0;
     
-    auto transfer_end = std::chrono::high_resolution_clock::now();
-    auto transfer_time = std::chrono::duration_cast<std::chrono::microseconds>
-                        (transfer_end - transfer_start).count();
-    
-    // Launch kernel
-    int blockSize = 256;
-    int numBlocks = (NUM_PACKETS + blockSize - 1) / blockSize;
-    processPacketsBasic<<<numBlocks, blockSize>>>(d_packets, d_results, NUM_PACKETS);
-    
-    // Wait for kernel to finish
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-    
-    // Copy results back to host
-    CHECK_CUDA_ERROR(cudaMemcpy(h_results, d_results, NUM_PACKETS * sizeof(PacketResult), 
-                     cudaMemcpyDeviceToHost));
-    
-    STOP_TIMER("Pinned memory processing (total)");
-    printf("Transfer time: %lld us\n", transfer_time);
-    
-    // Print some results
-    int drops = 0, forwards = 0, modifies = 0;
-    for (int i = 0; i < NUM_PACKETS; i++) {
-        switch (h_results[i].action) {
-            case 0: drops++; break;
-            case 1: forwards++; break;
-            case 2: modifies++; break;
-        }
+    // Process packets in batches
+    for (int batch = 0; batch < metrics.numBatches; batch++) {
+        int offset = batch * batchSize;
+        int currentBatchSize = (batch == metrics.numBatches - 1) ? 
+                             (NUM_PACKETS - batch * batchSize) : batchSize;
+        
+        // Copy from global to pinned memory
+        memcpy(h_pinned_packets, g_test_packets + offset, 
+               currentBatchSize * sizeof(Packet));
+        
+        // Copy batch to device using pinned memory
+        auto transfer_start = std::chrono::high_resolution_clock::now();
+        
+        CHECK_CUDA_ERROR(cudaMemcpy(d_packets, h_pinned_packets, 
+                         currentBatchSize * sizeof(Packet), 
+                         cudaMemcpyHostToDevice));
+        
+        auto transfer_end = std::chrono::high_resolution_clock::now();
+        total_transfer_time += std::chrono::duration_cast<std::chrono::microseconds>
+                              (transfer_end - transfer_start).count();
+        
+        // Process batch
+        int blockSize = 256;
+        int numBlocks = (currentBatchSize + blockSize - 1) / blockSize;
+        
+        auto kernel_start = std::chrono::high_resolution_clock::now();
+        processPacketsBasic<<<numBlocks, blockSize>>>(d_packets, d_results, currentBatchSize);
+        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        auto kernel_end = std::chrono::high_resolution_clock::now();
+        
+        total_kernel_time += std::chrono::duration_cast<std::chrono::microseconds>
+                           (kernel_end - kernel_start).count();
+        
+        // Copy results back to pinned memory
+        CHECK_CUDA_ERROR(cudaMemcpy(h_pinned_results, d_results, 
+                         currentBatchSize * sizeof(PacketResult), 
+                         cudaMemcpyDeviceToHost));
+        
+        // Copy from pinned to global memory
+        memcpy(g_test_results + offset, h_pinned_results, 
+               currentBatchSize * sizeof(PacketResult));
     }
     
-    printf("Processed %d packets: %d drops, %d forwards, %d modifies\n", 
-           NUM_PACKETS, drops, forwards, modifies);
+    auto end = std::chrono::high_resolution_clock::now();
+    metrics.totalTime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    metrics.transferTime = total_transfer_time;
+    metrics.kernelTime = total_kernel_time;
+    
+    printf("Pinned memory processing: total=%lld us, transfer=%lld us, kernel=%lld us\n", 
+           metrics.totalTime, metrics.transferTime, metrics.kernelTime);
+    
+    // Calculate statistics
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Print performance metrics
+    char stageTitle[100];
+    snprintf(stageTitle, sizeof(stageTitle), "Stage 2: Pinned Memory Optimization (Batch Size = %d)", batchSize);
+    printPerformanceMetrics(stageTitle, metrics);
     
     // Cleanup
-    CHECK_CUDA_ERROR(cudaFreeHost(h_packets));
-    CHECK_CUDA_ERROR(cudaFreeHost(h_results));
+    CHECK_CUDA_ERROR(cudaFreeHost(h_pinned_packets));
+    CHECK_CUDA_ERROR(cudaFreeHost(h_pinned_results));
     CHECK_CUDA_ERROR(cudaFree(d_packets));
     CHECK_CUDA_ERROR(cudaFree(d_results));
+    
+    return metrics.totalTime;
 }
 
 /******************************************************************************
@@ -310,11 +228,13 @@ void runPinnedMemoryProcessing() {
  * to overlap transfers and computation, reducing overall latency.
  ******************************************************************************/
 
-void runBatchedStreamProcessing() {
-    printf("\n=== Stage 3: Batched Processing with Streams ===\n");
+long long runBatchedStreamProcessing(int batchSize) {
+    PerformanceMetrics metrics = {0};
+    metrics.batchSize = batchSize;
+    metrics.numBatches = (NUM_PACKETS + batchSize - 1) / batchSize;
     
-    const int packetsPerBatch = BATCH_SIZE;
-    const int numBatches = (NUM_PACKETS + packetsPerBatch - 1) / packetsPerBatch;
+    // Reset packet status
+    resetPacketStatus();
     
     // Create CUDA streams
     cudaStream_t streams[NUM_STREAMS];
@@ -327,18 +247,10 @@ void runBatchedStreamProcessing() {
     PacketResult* h_results[MAX_BATCHES];
     
     for (int i = 0; i < MAX_BATCHES; i++) {
-        CHECK_CUDA_ERROR(cudaHostAlloc(&h_packets[i], packetsPerBatch * sizeof(Packet), 
+        CHECK_CUDA_ERROR(cudaHostAlloc(&h_packets[i], batchSize * sizeof(Packet), 
                          cudaHostAllocDefault));
-        CHECK_CUDA_ERROR(cudaHostAlloc(&h_results[i], packetsPerBatch * sizeof(PacketResult), 
+        CHECK_CUDA_ERROR(cudaHostAlloc(&h_results[i], batchSize * sizeof(PacketResult), 
                          cudaHostAllocDefault));
-    }
-    
-    // Generate test packets for all batches
-    for (int batch = 0; batch < numBatches; batch++) {
-        int batchSize = (batch == numBatches - 1) ? 
-                        (NUM_PACKETS - batch * packetsPerBatch) : packetsPerBatch;
-        
-        generateTestPackets(h_packets[batch % MAX_BATCHES], batchSize);
     }
     
     // Allocate device memory for each batch
@@ -346,38 +258,42 @@ void runBatchedStreamProcessing() {
     PacketResult* d_results[MAX_BATCHES];
     
     for (int i = 0; i < MAX_BATCHES; i++) {
-        CHECK_CUDA_ERROR(cudaMalloc(&d_packets[i], packetsPerBatch * sizeof(Packet)));
-        CHECK_CUDA_ERROR(cudaMalloc(&d_results[i], packetsPerBatch * sizeof(PacketResult)));
+        CHECK_CUDA_ERROR(cudaMalloc(&d_packets[i], batchSize * sizeof(Packet)));
+        CHECK_CUDA_ERROR(cudaMalloc(&d_results[i], batchSize * sizeof(PacketResult)));
     }
     
     // Kernel launch parameters
     int blockSize = 256;
     
     // Measure performance with batched stream processing
-    START_TIMER
+    auto start = std::chrono::high_resolution_clock::now();
     
     // Process all batches
-    for (int batch = 0; batch < numBatches; batch++) {
+    for (int batch = 0; batch < metrics.numBatches; batch++) {
         int streamIdx = batch % NUM_STREAMS;
         int batchIdx = batch % MAX_BATCHES;
-        int batchSize = (batch == numBatches - 1) ? 
-                        (NUM_PACKETS - batch * packetsPerBatch) : packetsPerBatch;
+        int currentBatchSize = (batch == metrics.numBatches - 1) ? 
+                        (NUM_PACKETS - batch * batchSize) : batchSize;
+        
+        // Copy test packets to pinned memory
+        memcpy(h_packets[batchIdx], g_test_packets + batch * batchSize, 
+               currentBatchSize * sizeof(Packet));
         
         // Number of thread blocks needed for this batch
-        int numBlocks = (batchSize + blockSize - 1) / blockSize;
+        int numBlocks = (currentBatchSize + blockSize - 1) / blockSize;
         
         // Transfer batch to device
         CHECK_CUDA_ERROR(cudaMemcpyAsync(d_packets[batchIdx], h_packets[batchIdx], 
-                         batchSize * sizeof(Packet), cudaMemcpyHostToDevice, 
+                         currentBatchSize * sizeof(Packet), cudaMemcpyHostToDevice, 
                          streams[streamIdx]));
         
         // Process batch
         processPacketsBasic<<<numBlocks, blockSize, 0, streams[streamIdx]>>>(
-            d_packets[batchIdx], d_results[batchIdx], batchSize);
+            d_packets[batchIdx], d_results[batchIdx], currentBatchSize);
         
         // Transfer results back
         CHECK_CUDA_ERROR(cudaMemcpyAsync(h_results[batchIdx], d_results[batchIdx], 
-                         batchSize * sizeof(PacketResult), cudaMemcpyDeviceToHost, 
+                         currentBatchSize * sizeof(PacketResult), cudaMemcpyDeviceToHost, 
                          streams[streamIdx]));
         
         // If we've used all available batch slots, synchronize the oldest stream
@@ -385,23 +301,48 @@ void runBatchedStreamProcessing() {
         if (batch >= MAX_BATCHES - 1) {
             int oldestStreamIdx = (batch - (MAX_BATCHES - 1)) % NUM_STREAMS;
             CHECK_CUDA_ERROR(cudaStreamSynchronize(streams[oldestStreamIdx]));
+            
+            // Copy results to global buffer
+            int oldestBatch = batch - (MAX_BATCHES - 1);
+            int oldestBatchIdx = oldestBatch % MAX_BATCHES;
+            int oldestBatchSize = (oldestBatch == metrics.numBatches - 1) ? 
+                           (NUM_PACKETS - oldestBatch * batchSize) : batchSize;
+            
+            memcpy(g_test_results + oldestBatch * batchSize, h_results[oldestBatchIdx],
+                   oldestBatchSize * sizeof(PacketResult));
         }
     }
     
-    // Synchronize all streams
+    // Synchronize all streams and copy remaining results
     for (int i = 0; i < NUM_STREAMS; i++) {
         CHECK_CUDA_ERROR(cudaStreamSynchronize(streams[i]));
     }
     
-    STOP_TIMER("Batched stream processing (total)");
+    // Copy any remaining results that weren't copied during processing
+    for (int batch = std::max(0, metrics.numBatches - (MAX_BATCHES - 1)); batch < metrics.numBatches; batch++) {
+        int batchIdx = batch % MAX_BATCHES;
+        int currentBatchSize = (batch == metrics.numBatches - 1) ? 
+                        (NUM_PACKETS - batch * batchSize) : batchSize;
+        
+        memcpy(g_test_results + batch * batchSize, h_results[batchIdx],
+               currentBatchSize * sizeof(PacketResult));
+    }
     
-    // Calculate average latency per batch
-    double avgLatencyPerBatch = std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::high_resolution_clock::now() - start).count() / 
-                (double)numBatches;
+    auto end = std::chrono::high_resolution_clock::now();
+    metrics.totalTime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    printf("Batched stream processing (total): %lld us\n", metrics.totalTime);
     
-    printf("Average latency per batch: %.2f us\n", avgLatencyPerBatch);
-    printf("Average latency per packet: %.2f us\n", avgLatencyPerBatch / packetsPerBatch);
+    // Calculate average latency per batch and per packet
+    metrics.avgBatchLatency = (double)metrics.totalTime / metrics.numBatches;
+    metrics.avgPacketLatency = (double)metrics.totalTime / NUM_PACKETS;
+    
+    // Calculate statistics
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Print performance metrics
+    char stageTitle[100];
+    snprintf(stageTitle, sizeof(stageTitle), "Stage 3: Batched Streams (Batch Size = %d)", batchSize);
+    printPerformanceMetrics(stageTitle, metrics);
     
     // Cleanup
     for (int i = 0; i < MAX_BATCHES; i++) {
@@ -414,6 +355,8 @@ void runBatchedStreamProcessing() {
     for (int i = 0; i < NUM_STREAMS; i++) {
         CHECK_CUDA_ERROR(cudaStreamDestroy(streams[i]));
     }
+    
+    return metrics.totalTime;
 }
 
 /******************************************************************************
@@ -423,88 +366,79 @@ void runBatchedStreamProcessing() {
  * which can reduce latency for small packets.
  ******************************************************************************/
 
-// Kernel for zero-copy processing
-__global__ void processPacketsZeroCopy(Packet* packets, PacketResult* results, int numPackets) {
-    int tid = blockIdx.x * blockDim.x + threadIdx.x;
-    
-    if (tid < numPackets) {
-        Packet* packet = &packets[tid];
-        PacketResult* result = &results[tid];
-        
-        // Extract packet information
-        result->packetId = tid;
-        result->matches = 0;
-        
-        // Simple pattern matching - count occurrences of byte value 0x42
-        for (int i = 0; i < packet->size - PACKET_HEADER_SIZE; i++) {
-            if (packet->payload[i] == 0x42) {
-                result->matches++;
-            }
-        }
-        
-        // Decision logic
-        if (result->matches > 5) {
-            result->action = 0;  // Drop
-        } else if (result->matches > 0) {
-            result->action = 2;  // Modify
-        } else {
-            result->action = 1;  // Forward
-        }
-        
-        // Mark packet as processed directly in host memory
-        packet->status = COMPLETED;
-    }
-}
+// Note: The processPacketsZeroCopy kernel is already defined in packet_processing_kernels.cuh
 
-void runZeroCopyProcessing() {
-    printf("\n=== Stage 4: Zero-Copy Memory ===\n");
+long long runZeroCopyProcessing(int batchSize) {
+    PerformanceMetrics metrics = {0};
+    metrics.batchSize = batchSize;
+    metrics.numBatches = (NUM_PACKETS + batchSize - 1) / batchSize;
     
-    // Allocate mapped memory for packets and results
-    Packet* h_packets;
-    PacketResult* h_results;
-    CHECK_CUDA_ERROR(cudaHostAlloc(&h_packets, NUM_PACKETS * sizeof(Packet), 
+    // Reset packet status
+    resetPacketStatus();
+    
+    // Allocate zero-copy (mapped) memory
+    Packet* h_zero_copy_packets;
+    PacketResult* h_zero_copy_results;
+    
+    CHECK_CUDA_ERROR(cudaHostAlloc(&h_zero_copy_packets, batchSize * sizeof(Packet), 
                      cudaHostAllocMapped));
-    CHECK_CUDA_ERROR(cudaHostAlloc(&h_results, NUM_PACKETS * sizeof(PacketResult), 
+    CHECK_CUDA_ERROR(cudaHostAlloc(&h_zero_copy_results, batchSize * sizeof(PacketResult), 
                      cudaHostAllocMapped));
     
     // Get device pointers to the mapped memory
-    Packet* d_packets;
-    PacketResult* d_results;
-    CHECK_CUDA_ERROR(cudaHostGetDevicePointer(&d_packets, h_packets, 0));
-    CHECK_CUDA_ERROR(cudaHostGetDevicePointer(&d_results, h_results, 0));
+    Packet* d_zero_copy_packets;
+    PacketResult* d_zero_copy_results;
     
-    // Generate test packets
-    generateTestPackets(h_packets, NUM_PACKETS);
+    CHECK_CUDA_ERROR(cudaHostGetDevicePointer(&d_zero_copy_packets, h_zero_copy_packets, 0));
+    CHECK_CUDA_ERROR(cudaHostGetDevicePointer(&d_zero_copy_results, h_zero_copy_results, 0));
     
-    // Measure performance with zero-copy memory
-    START_TIMER
+    // Measure performance
+    auto start = std::chrono::high_resolution_clock::now();
     
-    // Launch kernel
-    int blockSize = 256;
-    int numBlocks = (NUM_PACKETS + blockSize - 1) / blockSize;
-    processPacketsZeroCopy<<<numBlocks, blockSize>>>(d_packets, d_results, NUM_PACKETS);
-    
-    // Wait for kernel to finish
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-    
-    STOP_TIMER("Zero-copy processing (total)");
-    
-    // Print some results
-    int drops = 0, forwards = 0, modifies = 0;
-    for (int i = 0; i < NUM_PACKETS; i++) {
-        switch (h_results[i].action) {
-            case 0: drops++; break;
-            case 1: forwards++; break;
-            case 2: modifies++; break;
-        }
+    // Process packets in batches
+    for (int batch = 0; batch < metrics.numBatches; batch++) {
+        int offset = batch * batchSize;
+        int currentBatchSize = (batch == metrics.numBatches - 1) ? 
+                             (NUM_PACKETS - batch * batchSize) : batchSize;
+        
+        // Copy batch to zero-copy buffer (still needed for test data)
+        memcpy(h_zero_copy_packets, g_test_packets + offset, 
+               currentBatchSize * sizeof(Packet));
+        
+        // Process batch directly in zero-copy memory
+        int blockSize = 256;
+        int numBlocks = (currentBatchSize + blockSize - 1) / blockSize;
+        
+        processPacketsZeroCopy<<<numBlocks, blockSize>>>(d_zero_copy_packets, 
+                                                        d_zero_copy_results, 
+                                                        currentBatchSize);
+        
+        // Wait for kernel to finish
+        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        
+        // Copy results to global buffer (no device-to-host transfer needed)
+        memcpy(g_test_results + offset, h_zero_copy_results, 
+               currentBatchSize * sizeof(PacketResult));
     }
     
-    printf("Processed %d packets: %d drops, %d forwards, %d modifies\n", 
-           NUM_PACKETS, drops, forwards, modifies);
+    auto end = std::chrono::high_resolution_clock::now();
+    metrics.totalTime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    printf("Zero-copy processing (total): %lld us\n", metrics.totalTime);
+    
+    // Calculate statistics
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Print performance metrics
+    char stageTitle[100];
+    snprintf(stageTitle, sizeof(stageTitle), "Stage 4: Zero-Copy Memory (Batch Size = %d)", batchSize);
+    printPerformanceMetrics(stageTitle, metrics);
     
     // Cleanup
-    CHECK_CUDA_ERROR(cudaFreeHost(h_packets));
-    CHECK_CUDA_ERROR(cudaFreeHost(h_results));
+    CHECK_CUDA_ERROR(cudaFreeHost(h_zero_copy_packets));
+    CHECK_CUDA_ERROR(cudaFreeHost(h_zero_copy_results));
+    
+    return metrics.totalTime;
 }
 
 /******************************************************************************
@@ -515,125 +449,51 @@ void runZeroCopyProcessing() {
  * launch overhead for minimal latency.
  ******************************************************************************/
 
-// Persistent kernel for continuous packet processing
-__global__ void persistentPacketKernel(PacketBatch* batches, PacketResult* results, 
-                                       volatile GlobalState* state, int maxBatches) {
-    // Shared memory for batch index and status
-    __shared__ int s_batchIdx;
-    __shared__ int s_batchSize;
-    
-    // Each thread processes one packet in the batch
-    int tid = threadIdx.x;
-    
-    // Keep kernel running indefinitely
-    while (!state->shutdown) {
-        // Master thread checks for new work
-        if (tid == 0) {
-            s_batchIdx = -1;
-            s_batchSize = 0;
-            
-            // Check if there's a batch ready to process
-            for (int i = 0; i < maxBatches; i++) {
-                if (batches[i].ready == 1) {
-                    // Claim this batch
-                    int oldValue = atomicExch((int*)&batches[i].ready, 0);
-                    
-                    if (oldValue == 1) {
-                        s_batchIdx = i;
-                        s_batchSize = batches[i].count;
-                        batches[i].status = PROCESSING;
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // Make batch index visible to all threads
-        __syncthreads();
-        
-        // If no batch found, sleep briefly and check again
-        if (s_batchIdx == -1) {
-            // Simple sleep - in a real implementation, consider more sophisticated approach
-            for (int i = 0; i < 1000; i++) {
-                // This acts as a sleep
-            }
-            continue;
-        }
-        
-        // Process the assigned batch if this thread has a packet to process
-        if (tid < s_batchSize) {
-            Packet* packet = &batches[s_batchIdx].packets[tid];
-            PacketResult* result = &results[s_batchIdx * BATCH_SIZE + tid];
-            
-            // Simple pattern matching
-            result->packetId = tid;
-            result->matches = 0;
-            
-            for (int i = 0; i < packet->size - PACKET_HEADER_SIZE; i++) {
-                if (packet->payload[i] == 0x42) {
-                    result->matches++;
-                }
-            }
-            
-            // Decision logic
-            if (result->matches > 5) {
-                result->action = 0;  // Drop
-            } else if (result->matches > 0) {
-                result->action = 2;  // Modify
-            } else {
-                result->action = 1;  // Forward
-            }
-            
-            // Mark packet as processed
-            packet->status = COMPLETED;
-        }
-        
-        // Ensure all threads complete processing before marking batch as done
-        __syncthreads();
-        
-        // Master thread marks batch as completed
-        if (tid == 0) {
-            batches[s_batchIdx].status = COMPLETED;
-            atomicAdd((int*)&state->batchesCompleted, 1);
-        }
-    }
-}
-
 // Producer thread that generates packets and enqueues batches
-void packetProducerThread(PacketBatch* h_batches, GlobalState* h_state, int numBatches) {
+void packetProducerThread(PacketBatch* h_batches, GlobalState* h_state, int numBatches, int batchSize) {
     for (int batch = 0; batch < numBatches; batch++) {
         // Calculate which batch slot to use
         int batchIdx = batch % MAX_BATCHES;
         
         // Calculate batch size
-        int batchSize = (batch == numBatches - 1) ? 
-                        (NUM_PACKETS - batch * BATCH_SIZE) : BATCH_SIZE;
+        int currentBatchSize = (batch == numBatches - 1) ? 
+                        (NUM_PACKETS - batch * batchSize) : batchSize;
         
         // Wait until this batch slot is free (status == COMPLETED)
         while (h_batches[batchIdx].status != COMPLETED && 
                h_batches[batchIdx].status != 0) {
+            // Very short sleep to reduce contention
+            // This has minimal impact on benchmarking since we're waiting for an event anyway
             std::this_thread::sleep_for(std::chrono::microseconds(10));
         }
         
-        // Generate new packets for this batch
-        generateTestPackets(h_batches[batchIdx].packets, batchSize);
-        h_batches[batchIdx].count = batchSize;
+        // Copy packets from global buffer to batch
+        int startIdx = batch * batchSize;
+        memcpy(h_batches[batchIdx].packets, g_test_packets + startIdx, 
+               currentBatchSize * sizeof(Packet));
+        
+        h_batches[batchIdx].count = currentBatchSize;
         h_batches[batchIdx].status = PENDING;
         
-        // Signal that batch is ready for processing - use regular increment for host code
+        // Signal that batch is ready for processing
         h_batches[batchIdx].ready = 1;
-        // Increment counter using regular addition instead of atomicAdd which is device-only
         h_state->batchesReady++;
         
-        // Simulate packet arrival rate - adjust for desired packet rate
-        std::this_thread::sleep_for(std::chrono::microseconds(500));
+        // Very minimal sleep between batches to allow kernel to process
+        // This simulates realistic arrival patterns without distorting measurements significantly
+        if (batch % 10 == 0) {
+            std::this_thread::sleep_for(std::chrono::microseconds(1));
+        }
     }
 }
 
-void runPersistentKernelProcessing() {
-    printf("\n=== Stage 5: Persistent Kernel ===\n");
+long long runPersistentKernelProcessing(int batchSize) {
+    PerformanceMetrics metrics = {0};
+    metrics.batchSize = batchSize;
+    metrics.numBatches = (NUM_PACKETS + batchSize - 1) / batchSize;
     
-    const int numBatches = (NUM_PACKETS + BATCH_SIZE - 1) / BATCH_SIZE;
+    // Reset packet status
+    resetPacketStatus();
     
     // Allocate and initialize host memory for batches
     PacketBatch* h_batches;
@@ -661,26 +521,41 @@ void runPersistentKernelProcessing() {
     CHECK_CUDA_ERROR(cudaHostGetDevicePointer(&d_state, h_state, 0));
     CHECK_CUDA_ERROR(cudaMalloc(&d_results, NUM_PACKETS * sizeof(PacketResult)));
     
-    // Launch persistent kernel with one block of BATCH_SIZE threads
-    persistentPacketKernel<<<1, BATCH_SIZE>>>(d_batches, d_results, d_state, MAX_BATCHES);
+    // Launch persistent kernel with one block of batchSize threads
+    persistentPacketKernel<<<1, batchSize>>>(d_batches, d_results, d_state, MAX_BATCHES);
     
     // Measure performance with persistent kernel
-    START_TIMER
+    auto start = std::chrono::high_resolution_clock::now();
     
     // Start producer thread to generate packets
-    std::thread producer(packetProducerThread, h_batches, h_state, numBatches);
+    std::thread producer(packetProducerThread, h_batches, h_state, metrics.numBatches, batchSize);
     
-    // Monitor progress
-    int lastBatchesCompleted = 0;
-    while (h_state->batchesCompleted < numBatches) {
-        // Check for progress
-        if (h_state->batchesCompleted > lastBatchesCompleted) {
-            printf("Completed %d/%d batches\n", 
-                   h_state->batchesCompleted, numBatches);
-            lastBatchesCompleted = h_state->batchesCompleted;
+    // Monitor progress with timeout to prevent infinite hang
+    const auto timeout = std::chrono::seconds(10); // 10 second timeout
+    auto monitorStart = std::chrono::high_resolution_clock::now();
+    int lastCompleted = 0;
+    bool timedOut = false;
+    
+    while (h_state->batchesCompleted < metrics.numBatches) {
+        // Periodically check if we're making progress
+        if (h_state->batchesCompleted > lastCompleted) {
+            // We're making progress, update
+            lastCompleted = h_state->batchesCompleted;
+            monitorStart = std::chrono::high_resolution_clock::now(); // Reset timeout
         }
         
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        // Check for timeout
+        auto now = std::chrono::high_resolution_clock::now();
+        if (now - monitorStart > timeout) {
+            printf("Timeout detected! Processed %d/%d batches\n", 
+                   h_state->batchesCompleted, metrics.numBatches);
+            timedOut = true;
+            break;
+        }
+        
+        // Short sleep instead of busy-wait to reduce CPU usage
+        // This won't affect benchmarking accuracy because we're just waiting
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     
     // Signal shutdown
@@ -690,124 +565,169 @@ void runPersistentKernelProcessing() {
     producer.join();
     
     // Copy results back
-    CHECK_CUDA_ERROR(cudaMemcpy(h_results, d_results, 
+    CHECK_CUDA_ERROR(cudaMemcpy(g_test_results, d_results, 
                      NUM_PACKETS * sizeof(PacketResult), 
                      cudaMemcpyDeviceToHost));
     
     // Wait for kernel to exit
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     
-    STOP_TIMER("Persistent kernel processing (total)");
+    auto end = std::chrono::high_resolution_clock::now();
+    metrics.totalTime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    if (timedOut) {
+        printf("Warning: Persistent kernel processing timed out!\n");
+        printf("Processed %d/%d batches\n", h_state->batchesCompleted, metrics.numBatches);
+    }
+    
+    // Calculate statistics based on actually processed packets
+    int processed_packets = std::min(h_state->batchesCompleted * batchSize, NUM_PACKETS);
+    calculateResults(g_test_results, processed_packets, metrics);
+    
+    // Print performance metrics
+    char stageTitle[100];
+    snprintf(stageTitle, sizeof(stageTitle), "Stage 5: Persistent Kernel (Batch Size = %d)", batchSize);
+    printPerformanceMetrics(stageTitle, metrics);
     
     // Cleanup
     CHECK_CUDA_ERROR(cudaFreeHost(h_batches));
     CHECK_CUDA_ERROR(cudaFreeHost(h_state));
     CHECK_CUDA_ERROR(cudaFreeHost(h_results));
     CHECK_CUDA_ERROR(cudaFree(d_results));
+    
+    return metrics.totalTime;
 }
 
 /******************************************************************************
  * Stage 6: CUDA Graphs
  * 
- * This version uses CUDA Graphs to capture and replay a sequence of operations,
- * reducing CPU overhead and launch latency.
+ * This version uses CUDA Graphs to capture and replay the entire sequence
+ * of operations (memory transfers, kernel launches) for minimal CPU overhead.
  ******************************************************************************/
 
-void runCudaGraphProcessing() {
-    printf("\n=== Stage 6: CUDA Graphs ===\n");
+long long runCudaGraphsProcessing(int batchSize) {
+    PerformanceMetrics metrics = {0};
+    metrics.batchSize = batchSize;
+    metrics.numBatches = (NUM_PACKETS + batchSize - 1) / batchSize;
     
-    const int packetsPerBatch = BATCH_SIZE;
-    const int numBatches = (NUM_PACKETS + packetsPerBatch - 1) / packetsPerBatch;
+    // Reset packet status
+    resetPacketStatus();
     
-    // Create a CUDA stream for graph capture
-    cudaStream_t stream;
-    CHECK_CUDA_ERROR(cudaStreamCreate(&stream));
+    // Allocate pinned memory for host
+    Packet* h_batch_packets;
+    PacketResult* h_batch_results;
     
-    // Allocate pinned memory for packets and results
-    Packet* h_packets;
-    PacketResult* h_results;
-    CHECK_CUDA_ERROR(cudaHostAlloc(&h_packets, BATCH_SIZE * sizeof(Packet), 
+    CHECK_CUDA_ERROR(cudaHostAlloc(&h_batch_packets, batchSize * sizeof(Packet), 
                      cudaHostAllocDefault));
-    CHECK_CUDA_ERROR(cudaHostAlloc(&h_results, BATCH_SIZE * sizeof(PacketResult), 
+    CHECK_CUDA_ERROR(cudaHostAlloc(&h_batch_results, batchSize * sizeof(PacketResult), 
                      cudaHostAllocDefault));
     
     // Allocate device memory
-    Packet* d_packets;
-    PacketResult* d_results;
-    CHECK_CUDA_ERROR(cudaMalloc(&d_packets, BATCH_SIZE * sizeof(Packet)));
-    CHECK_CUDA_ERROR(cudaMalloc(&d_results, BATCH_SIZE * sizeof(PacketResult)));
+    Packet* d_batch_packets;
+    PacketResult* d_batch_results;
     
-    // Generate test packets for the first batch
-    generateTestPackets(h_packets, BATCH_SIZE);
+    CHECK_CUDA_ERROR(cudaMalloc(&d_batch_packets, batchSize * sizeof(Packet)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_batch_results, batchSize * sizeof(PacketResult)));
     
-    // Kernel launch parameters
-    int blockSize = 256;
-    int numBlocks = (BATCH_SIZE + blockSize - 1) / blockSize;
+    // Create CUDA stream
+    cudaStream_t stream;
+    CHECK_CUDA_ERROR(cudaStreamCreate(&stream));
     
-    // Create graph
+    // Create CUDA graph
     cudaGraph_t graph;
     cudaGraphExec_t graphExec;
     
-    // Capture a sequence of operations into a graph
-    CHECK_CUDA_ERROR(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
-    
-    // Copy batch to device
-    CHECK_CUDA_ERROR(cudaMemcpyAsync(d_packets, h_packets, 
-                     BATCH_SIZE * sizeof(Packet), 
-                     cudaMemcpyHostToDevice, stream));
-    
-    // Process batch
-    processPacketsBasic<<<numBlocks, blockSize, 0, stream>>>(
-        d_packets, d_results, BATCH_SIZE);
-    
-    // Copy results back
-    CHECK_CUDA_ERROR(cudaMemcpyAsync(h_results, d_results, 
-                     BATCH_SIZE * sizeof(PacketResult), 
-                     cudaMemcpyDeviceToHost, stream));
-    
-    // End capture
-    CHECK_CUDA_ERROR(cudaStreamEndCapture(stream, &graph));
-    
-    // Create executable graph
-    CHECK_CUDA_ERROR(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
-    
-    // Measure performance with CUDA Graphs
-    START_TIMER
-    
-    double totalGraphLaunchTime = 0;
-    
-    // Process all batches using the graph
-    for (int batch = 0; batch < numBatches; batch++) {
-        // Generate test packets for this batch
-        int batchSize = (batch == numBatches - 1) ? 
-                        (NUM_PACKETS - batch * BATCH_SIZE) : BATCH_SIZE;
-        generateTestPackets(h_packets, batchSize);
+    // Capture graph once for a typical batch
+    {
+        // Fill a batch with test packets
+        memcpy(h_batch_packets, g_test_packets, batchSize * sizeof(Packet));
         
-        // Launch the graph
-        auto launch_start = std::chrono::high_resolution_clock::now();
-        CHECK_CUDA_ERROR(cudaGraphLaunch(graphExec, stream));
-        CHECK_CUDA_ERROR(cudaStreamSynchronize(stream));
-        auto launch_end = std::chrono::high_resolution_clock::now();
+        // Begin graph capture
+        CHECK_CUDA_ERROR(cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal));
         
-        // Record launch time
-        totalGraphLaunchTime += std::chrono::duration_cast<std::chrono::microseconds>
-                              (launch_end - launch_start).count();
+        // Copy data to device
+        CHECK_CUDA_ERROR(cudaMemcpyAsync(d_batch_packets, h_batch_packets, 
+                         batchSize * sizeof(Packet), 
+                         cudaMemcpyHostToDevice, stream));
+        
+        // Launch kernel
+        dim3 blockDim(256);
+        dim3 gridDim((batchSize + blockDim.x - 1) / blockDim.x);
+        processPacketsBasic<<<gridDim, blockDim, 0, stream>>>(d_batch_packets, d_batch_results, batchSize);
+        
+        // Copy results back
+        CHECK_CUDA_ERROR(cudaMemcpyAsync(h_batch_results, d_batch_results, 
+                         batchSize * sizeof(PacketResult), 
+                         cudaMemcpyDeviceToHost, stream));
+        
+        // End capture
+        CHECK_CUDA_ERROR(cudaStreamEndCapture(stream, &graph));
+        
+        // Create executable graph
+        CHECK_CUDA_ERROR(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
     }
     
-    STOP_TIMER("CUDA Graphs processing (total)");
+    // Measure performance using the graph
+    auto start = std::chrono::high_resolution_clock::now();
     
-    // Calculate average latency per batch
-    double avgGraphLaunchTime = totalGraphLaunchTime / numBatches;
-    printf("Average graph launch time per batch: %.2f us\n", avgGraphLaunchTime);
+    std::vector<long long> launchTimes;
+    launchTimes.reserve(metrics.numBatches);
+    
+    // Process all batches using graph
+    for (int batch = 0; batch < metrics.numBatches; batch++) {
+        int offset = batch * batchSize;
+        int currentBatchSize = (batch == metrics.numBatches - 1) ? 
+                             (NUM_PACKETS - batch * batchSize) : batchSize;
+        
+        // Copy batch data to pinned buffer
+        memcpy(h_batch_packets, g_test_packets + offset, currentBatchSize * sizeof(Packet));
+        
+        // Launch graph execution
+        auto launchStart = std::chrono::high_resolution_clock::now();
+        CHECK_CUDA_ERROR(cudaGraphLaunch(graphExec, stream));
+        CHECK_CUDA_ERROR(cudaStreamSynchronize(stream));
+        auto launchEnd = std::chrono::high_resolution_clock::now();
+        
+        // Track launch time
+        long long launchTime = std::chrono::duration_cast<std::chrono::microseconds>(
+                             launchEnd - launchStart).count();
+        launchTimes.push_back(launchTime);
+        
+        // Copy results to global buffer
+        memcpy(g_test_results + offset, h_batch_results, currentBatchSize * sizeof(PacketResult));
+    }
+    
+    auto end = std::chrono::high_resolution_clock::now();
+    metrics.totalTime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    // Calculate average launch time
+    double avgLaunchTime = 0;
+    for (long long time : launchTimes) {
+        avgLaunchTime += time;
+    }
+    avgLaunchTime /= launchTimes.size();
+    
+    printf("CUDA Graphs processing (total): %lld us\n", metrics.totalTime);
+    printf("Average graph launch time per batch: %.2f us\n", avgLaunchTime);
+    
+    // Calculate statistics
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Print performance metrics
+    char stageTitle[100];
+    snprintf(stageTitle, sizeof(stageTitle), "Stage 7: CUDA Graphs (Batch Size = %d)", batchSize);
+    printPerformanceMetrics(stageTitle, metrics);
     
     // Cleanup
     CHECK_CUDA_ERROR(cudaGraphDestroy(graph));
     CHECK_CUDA_ERROR(cudaGraphExecDestroy(graphExec));
     CHECK_CUDA_ERROR(cudaStreamDestroy(stream));
-    CHECK_CUDA_ERROR(cudaFreeHost(h_packets));
-    CHECK_CUDA_ERROR(cudaFreeHost(h_results));
-    CHECK_CUDA_ERROR(cudaFree(d_packets));
-    CHECK_CUDA_ERROR(cudaFree(d_results));
+    CHECK_CUDA_ERROR(cudaFreeHost(h_batch_packets));
+    CHECK_CUDA_ERROR(cudaFreeHost(h_batch_results));
+    CHECK_CUDA_ERROR(cudaFree(d_batch_packets));
+    CHECK_CUDA_ERROR(cudaFree(d_batch_results));
+    
+    return metrics.totalTime;
 }
 
 /******************************************************************************
@@ -824,30 +744,71 @@ int main(int argc, char **argv) {
     printf("Clock rate: %.2f GHz\n", prop.clockRate / 1e6);
     printf("Number of SMs: %d\n", prop.multiProcessorCount);
     
-    // Run each stage of optimization
-    runBasicProcessing();
-    runPinnedMemoryProcessing();
-    runBatchedStreamProcessing();
-    runZeroCopyProcessing();
-    runPersistentKernelProcessing();
-    runCudaGraphProcessing();
+    // Initialize test data
+    initializeTestData();
     
-    // Summarize results
-    printf("\n=== Summary ===\n");
-    printf("We've demonstrated several GPU optimization techniques for low-latency packet processing:\n");
-    printf("1. Basic processing: Our baseline implementation\n");
-    printf("2. Pinned memory: Faster host-device transfers\n");
-    printf("3. Batched streams: Overlapping transfers and computation\n");
-    printf("4. Zero-copy memory: Eliminating explicit transfers\n");
-    printf("5. Persistent kernels: Eliminating kernel launch overhead\n");
-    printf("6. CUDA Graphs: Reducing CPU overhead for launch sequences\n");
+    printf("\n===== Low-Latency GPU Packet Processing =====\n");
+    printf("Testing with %d packets\n\n", NUM_PACKETS);
     
-    printf("\nFor real-world low-latency packet processing, consider combining these techniques:\n");
-    printf("- Use persistent kernels for minimal latency\n");
-    printf("- Use pinned memory for data that must be transferred\n");
-    printf("- Use zero-copy for small, latency-sensitive data\n");
-    printf("- Use adaptive batching based on traffic patterns\n");
-    printf("- Use CUDA Graphs for complex, repeatable processing pipelines\n");
+    // Stage 0: CPU-based processing (baseline)
+    printf("\n=== Stage 0: CPU-based Processing (Baseline) ===\n");
+    long long cpuTime = runCPUProcessing();
+    
+    // Stage 1: Basic packet processing
+    printf("\n=== Stage 1: Basic Packet Processing ===\n");
+    long long basicGpuTime = runBasicProcessing();
+    
+    // Batch size exploration for optimization
+    printf("\n=== Batch Size Exploration ===\n");
+    int batchSizesToTest[] = {32, 64, 128, 256, 512, 1024};
+    int numBatchSizes = sizeof(batchSizesToTest) / sizeof(batchSizesToTest[0]);
+    
+    // Find optimal batch size
+    int optimalBatchSize = findOptimalBatchSize(batchSizesToTest, numBatchSizes);
+    
+    // Run all optimizations with the optimal batch size
+    printf("\n=== Running Optimizations with Optimal Batch Size: %d ===\n", optimalBatchSize);
+    
+    // Stage 2: Pinned Memory Optimization
+    printf("\n=== Stage 2: Pinned Memory Optimization (Batch Size = %d) ===\n", optimalBatchSize);
+    long long pinnedTime = runPinnedMemoryProcessing(optimalBatchSize);
+    
+    // Stage 3: Batched Processing with Streams
+    printf("\n=== Stage 3: Batched Processing with Streams (Batch Size = %d) ===\n", optimalBatchSize);
+    long long batchedTime = runBatchedStreamProcessing(optimalBatchSize);
+    
+    // Stage 4: Zero-Copy Memory
+    printf("\n=== Stage 4: Zero-Copy Memory (Batch Size = %d) ===\n", optimalBatchSize);
+    long long zeroCopyTime = runZeroCopyProcessing(optimalBatchSize);
+    
+    // Stage 5: Persistent Kernel
+    printf("\n=== Stage 5: Persistent Kernel (Batch Size = %d) ===\n", optimalBatchSize);
+    long long persistentTime = runPersistentKernelProcessing(optimalBatchSize);
+    
+    // Stage 6: CUDA Graphs
+    printf("\n=== Stage 6: CUDA Graphs (Batch Size = %d) ===\n", optimalBatchSize);
+    long long graphsTime = runCudaGraphsProcessing(optimalBatchSize);
+    
+    // Overall performance comparison
+    printf("\n=== Overall Performance Comparison ===\n");
+    printf("CPU Baseline: %lld us\n", cpuTime);
+    printf("Basic GPU: %lld us (%.2fx vs CPU)\n", basicGpuTime, (double)cpuTime / basicGpuTime);
+    printf("Pinned Memory: %lld us (%.2fx vs CPU)\n", pinnedTime, (double)cpuTime / pinnedTime);
+    printf("Batched Streams: %lld us (%.2fx vs CPU)\n", batchedTime, (double)cpuTime / batchedTime);
+    printf("Zero-Copy: %lld us (%.2fx vs CPU)\n", zeroCopyTime, (double)cpuTime / zeroCopyTime);
+    printf("Persistent Kernel: %lld us (%.2fx vs CPU)\n", persistentTime, (double)cpuTime / persistentTime);
+    printf("CUDA Graphs: %lld us (%.2fx vs CPU)\n", graphsTime, (double)cpuTime / graphsTime);
+    
+    printf("\n=== Optimization Techniques Demonstrated ===\n");
+    printf("1. Basic processing - baseline\n");
+    printf("2. Pinned memory - faster host-device transfers\n");
+    printf("3. Batched streams - overlapping transfers and computation\n");
+    printf("4. Zero-copy memory - eliminating explicit transfers\n");
+    printf("5. Persistent kernels - reducing kernel launch overhead\n");
+    printf("6. CUDA Graphs - minimizing CPU overhead for launch sequences\n");
+
+    // Clean up test data
+    cleanupTestData();
     
     return 0;
 } 

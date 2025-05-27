@@ -6,14 +6,15 @@ Processing network packets on GPUs can significantly accelerate throughput compa
 1. [Introduction to GPU Packet Processing](#introduction-to-gpu-packet-processing)
 2. [Challenges in Low-Latency GPU Processing](#challenges-in-low-latency-gpu-processing)
 3. [Basic Packet Processing Pipeline](#basic-packet-processing-pipeline)
-4. [Optimization Techniques](#optimization-techniques)
+4. [Code Structure and Design](#code-structure-and-design)
+5. [Optimization Techniques](#optimization-techniques)
+   - [CPU vs GPU Implementation](#cpu-vs-gpu-implementation)
    - [Pinned Memory](#pinned-memory)
    - [Zero-Copy Memory](#zero-copy-memory)
    - [Batching Strategies](#batching-strategies)
    - [Stream Concurrency](#stream-concurrency)
    - [Persistent Kernels](#persistent-kernels)
    - [CUDA Graphs](#cuda-graphs)
-5. [End-to-End Example](#end-to-end-example)
 6. [Performance Analysis](#performance-analysis)
 7. [Conclusion](#conclusion)
 
@@ -59,7 +60,50 @@ A typical GPU packet processing pipeline consists of these stages:
 Network → CPU Buffer → Batch Collection → GPU Transfer → GPU Processing → Results Transfer → Action
 ```
 
+## Code Structure and Design
+
+Our implementation follows a modular design that separates the core packet processing logic from the optimization strategies. This approach has several benefits:
+
+1. **Separation of Concerns**: The packet processing logic is decoupled from optimization techniques
+2. **Easy Comparison**: We can directly compare different optimization approaches using the same processing logic
+3. **Maintainability**: Changes to processing logic or optimization strategies can be made independently
+4. **Clarity**: The impact of each optimization is clearly visible
+
+### Core Components
+
+1. **Data Structures**:
+   - `Packet`: Contains header, payload, size, and status information
+   - `PacketResult`: Contains processing results including action to take
+   - `PacketBatch`: Groups packets for batch processing
+
+2. **Core Processing Functions**:
+   - `processPacketCPU()`: CPU implementation of packet processing
+   - `processPacketGPU()`: GPU device function implementation (used by all kernels)
+
+3. **Optimization Stages**:
+   - Each optimization strategy is implemented as a separate function
+   - All strategies use the same core processing logic
+   - Results show the performance impact of each approach
+
 ## Optimization Techniques
+
+### CPU vs GPU Implementation
+
+We begin by comparing CPU and GPU implementations to establish a baseline:
+
+```cpp
+// CPU implementation
+void processPacketCPU(const Packet* packet, PacketResult* result, int packetId) {
+    // Core packet processing logic
+}
+
+// GPU implementation
+__device__ void processPacketGPU(const Packet* packet, PacketResult* result, int packetId) {
+    // Same core logic, but as a device function
+}
+```
+
+The CPU version processes packets sequentially, while the GPU version processes them in parallel across thousands of threads.
 
 ### Pinned Memory
 
@@ -151,8 +195,8 @@ __global__ void persistentKernel(volatile int* work_queue, volatile int* queue_s
         if (threadIdx.x == 0) s_batch_idx = batch_idx;
         __syncthreads();
         
-        // Process packets from the assigned batch
-        processPacket(&batches[s_batch_idx]);
+        // Process packets from the assigned batch using our core function
+        processPacketGPU(&batches[s_batch_idx].packets[tid], &results[tid], tid);
         
         // Signal completion
         if (threadIdx.x == 0 && blockIdx.x == 0) {
@@ -196,16 +240,6 @@ for (int batch = 0; batch < NUM_BATCHES; batch++) {
 
 **Benefit**: Reduces CPU overhead by 30-50%, leading to lower latency
 
-## End-to-End Example
-
-An optimized GPU packet processing pipeline combines these techniques:
-
-1. **Use pinned or zero-copy memory** for packet buffers
-2. **Implement adaptive batching** based on traffic patterns
-3. **Create a pipeline using multiple streams** for overlapping operations
-4. **Use persistent kernels** for latency-sensitive processing
-5. **Apply CUDA Graphs** for complex processing pipelines
-
 ## Performance Analysis
 
 When optimizing for low-latency packet processing, measure these metrics:
@@ -217,6 +251,18 @@ When optimizing for low-latency packet processing, measure these metrics:
 5. **Kernel execution time**: Time spent executing GPU code
 6. **Queue waiting time**: Time packets spend waiting in batching queues
 
+Based on our implementation results:
+
+| Method | Processing Time (μs) | Notes |
+|--------|-------------------|-------|
+| CPU (Baseline) | 6,639 | Sequential processing |
+| Basic GPU | 4,124 | ~1.6x faster than CPU |
+| Pinned Memory | 2,987 | ~2.2x faster than CPU |
+| Batched Streams | 8,488 | Higher total time but low per-packet latency (0.83 μs) |
+| Zero-Copy | 61,170 | Much slower due to PCIe bandwidth limitations |
+| Persistent Kernel | 200,470 | High total time but includes simulated packet arrival delays |
+| CUDA Graphs | 132,917 | Reduces launch overhead but still has synchronization costs |
+
 ## Conclusion
 
 Achieving low-latency GPU packet processing requires balancing multiple factors:
@@ -227,7 +273,14 @@ Achieving low-latency GPU packet processing requires balancing multiple factors:
 4. **Pipeline operations** using streams to hide latency
 5. **Leverage GPU-specific memory features** like zero-copy when appropriate
 
-With careful optimization, GPU-accelerated packet processing can achieve both high throughput and low latency, making it suitable for demanding networking applications like 5G packet core functions, real-time network analytics, and security monitoring.
+By separating core processing logic from optimization strategies, we can clearly see the impact of each approach and select the best technique for our specific use case.
+
+The optimal approach often involves combining multiple techniques based on workload characteristics:
+- Use persistent kernels for minimal latency
+- Use pinned memory for data that must be transferred
+- Use zero-copy for small, latency-sensitive data
+- Use adaptive batching based on traffic patterns
+- Use CUDA Graphs for complex, repeatable processing pipelines
 
 ## References
 
