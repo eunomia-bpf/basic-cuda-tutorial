@@ -73,9 +73,10 @@ inline long long runBasicProcessing() {
     CHECK_CUDA_ERROR(cudaMalloc(&d_packets, NUM_PACKETS * sizeof(Packet)));
     CHECK_CUDA_ERROR(cudaMalloc(&d_results, NUM_PACKETS * sizeof(PacketResult)));
     
-    // Copy packets to device
-    auto start = std::chrono::high_resolution_clock::now();
+    // Use timer macros for overall timing
+    START_TIMER
     
+    // Copy packets to device
     CHECK_CUDA_ERROR(cudaMemcpy(d_packets, g_test_packets, 
                      NUM_PACKETS * sizeof(Packet), cudaMemcpyHostToDevice));
     
@@ -83,24 +84,20 @@ inline long long runBasicProcessing() {
     int blockSize = 256;
     int numBlocks = (NUM_PACKETS + blockSize - 1) / blockSize;
     
+    // Timing for kernel execution
     auto kernel_start = std::chrono::high_resolution_clock::now();
     processPacketsBasic<<<numBlocks, blockSize>>>(d_packets, d_results, NUM_PACKETS);
     
     // Wait for kernel to finish
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     auto kernel_end = std::chrono::high_resolution_clock::now();
+    metrics.kernelTime = std::chrono::duration_cast<std::chrono::microseconds>(kernel_end - kernel_start).count();
+    printf("Kernel execution time: %lld us\n", metrics.kernelTime);
     
     // Copy results back to host
     CHECK_CUDA_ERROR(cudaMemcpy(g_test_results, d_results, 
                      NUM_PACKETS * sizeof(PacketResult), 
                      cudaMemcpyDeviceToHost));
-    
-    auto end = std::chrono::high_resolution_clock::now();
-    metrics.totalTime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-    metrics.kernelTime = std::chrono::duration_cast<std::chrono::microseconds>(kernel_end - kernel_start).count();
-    
-    printf("Basic processing (total): %lld us\n", metrics.totalTime);
-    printf("Kernel execution time: %lld us\n", metrics.kernelTime);
     
     // Calculate statistics
     calculateResults(g_test_results, NUM_PACKETS, metrics);
@@ -112,7 +109,8 @@ inline long long runBasicProcessing() {
     CHECK_CUDA_ERROR(cudaFree(d_packets));
     CHECK_CUDA_ERROR(cudaFree(d_results));
     
-    return metrics.totalTime;
+    // Return total time
+    STOP_TIMER("Basic processing (total)");
 }
 
 /******************************************************************************
@@ -142,7 +140,7 @@ inline long long runBatchSizeExploration(int batchSize) {
     CHECK_CUDA_ERROR(cudaMalloc(&d_results, batchSize * sizeof(PacketResult)));
     
     // Measure performance
-    auto start = std::chrono::high_resolution_clock::now();
+    START_TIMER
     
     long long total_transfer_time = 0;
     long long total_kernel_time = 0;
@@ -182,12 +180,23 @@ inline long long runBatchSizeExploration(int batchSize) {
                          cudaMemcpyDeviceToHost));
     }
     
-    auto end = std::chrono::high_resolution_clock::now();
-    metrics.totalTime = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    // Store metrics before stopping timer
     metrics.transferTime = total_transfer_time;
     metrics.kernelTime = total_kernel_time;
     
     // Calculate average latency
+    metrics.avgBatchLatency = 0; // Will be set after we get total time
+    metrics.avgPacketLatency = 0; // Will be set after we get total time
+    
+    // Calculate statistics
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Get total time and update latency metrics
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    metrics.totalTime = duration;
+    
+    // Now calculate the latency metrics
     metrics.avgBatchLatency = (double)metrics.totalTime / metrics.numBatches;
     metrics.avgPacketLatency = (double)metrics.totalTime / NUM_PACKETS;
     
@@ -195,9 +204,6 @@ inline long long runBatchSizeExploration(int batchSize) {
            batchSize, metrics.totalTime, metrics.transferTime, metrics.kernelTime);
     printf("Average latency per batch: %.2f us, per packet: %.2f us\n", 
            metrics.avgBatchLatency, metrics.avgPacketLatency);
-    
-    // Calculate statistics
-    calculateResults(g_test_results, NUM_PACKETS, metrics);
     
     // Print performance metrics
     char stageTitle[100];
