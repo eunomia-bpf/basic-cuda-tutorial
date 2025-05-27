@@ -536,11 +536,7 @@ long long runPersistentKernelProcessing(int batchSize) {
     CHECK_CUDA_ERROR(cudaMalloc(&d_packets, NUM_PACKETS * sizeof(Packet)));
     CHECK_CUDA_ERROR(cudaMalloc(&d_results, NUM_PACKETS * sizeof(PacketResult)));
     CHECK_CUDA_ERROR(cudaMalloc(&d_queue, sizeof(PacketWorkQueue)));
-    
-    // Copy all packets to device
-    CHECK_CUDA_ERROR(cudaMemcpy(d_packets, g_test_packets, 
-                     NUM_PACKETS * sizeof(Packet), cudaMemcpyHostToDevice));
-    
+   
     // Copy initial empty queue to device
     CHECK_CUDA_ERROR(cudaMemcpy(d_queue, h_queue, 
                      sizeof(PacketWorkQueue), cudaMemcpyHostToDevice));
@@ -571,77 +567,44 @@ long long runPersistentKernelProcessing(int batchSize) {
     // Start timing after kernel launch
     auto start = std::chrono::high_resolution_clock::now();
     
-    // Submit batches progressively to the running persistent kernel
+    // Process batches sequentially but efficiently
     for (int batch = 0; batch < metrics.numBatches; batch++) {
         int offset = batch * batchSize;
         int currentBatchSize = (batch == metrics.numBatches - 1) ? 
                              (NUM_PACKETS - batch * batchSize) : batchSize;
         
-        // Add packet indices to work queue
+        // Add packet indices for this batch to work queue
         for (int i = 0; i < currentBatchSize; i++) {
             h_queue->items[h_queue->tail + i] = offset + i;
         }
-        
-        // Update queue tail (add work items)
-        int oldTail = h_queue->tail;
         h_queue->tail += currentBatchSize;
         
-        // Copy updated queue to device (only the queue metadata and new work items)
+        // Copy updated queue to device (only once per batch)
         CHECK_CUDA_ERROR(cudaMemcpy(d_queue, h_queue, 
                          sizeof(PacketWorkQueue), cudaMemcpyHostToDevice));
         
-        // Wait for this batch to be processed by monitoring queue head
-        PacketWorkQueue tempQueue;
-        int lastHead = 0;
-        int stagnantCount = 0;
-        const int maxStagnant = 1000; // Max polls before considering stagnant
+        // Wait for this batch to complete using device synchronization
+        // The persistent kernel will process all available work items
+        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
         
-        while (true) {
-            CHECK_CUDA_ERROR(cudaMemcpy(&tempQueue, d_queue, 
-                             sizeof(PacketWorkQueue), cudaMemcpyDeviceToHost));
-            
-            // Check if this batch is fully processed
-            if (tempQueue.head >= h_queue->tail) {
-                break;
-            }
-            
-            // Check for progress
-            if (tempQueue.head == lastHead) {
-                stagnantCount++;
-                if (stagnantCount >= maxStagnant) {
-                    break;
-                }
-            } else {
-                lastHead = tempQueue.head;
-                stagnantCount = 0;
-            }
-            
-            // Small delay to avoid overwhelming the GPU
-            // std::this_thread::sleep_for(std::chrono::microseconds(50));
-        }
-        
-        // Copy current head to track batch progress
-        h_queue->head = tempQueue.head;
+        // Update local queue head to match what was processed
+        h_queue->head = h_queue->tail;
     }
-    
-    // Mark work as finished
-    h_queue->finished = 1;
-    CHECK_CUDA_ERROR(cudaMemcpy(d_queue, h_queue, 
-                     sizeof(PacketWorkQueue), cudaMemcpyHostToDevice));
-    
-    // Wait for kernel completion
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     
     // End timing
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     
-    printf("All batches submitted and processed, finalizing...\n");
+    printf("All work submitted and processed, finalizing...\n");
     printf("Persistent kernel completed, copying results...\n");
     
     // Copy results back to host
     CHECK_CUDA_ERROR(cudaMemcpy(g_test_results, d_results, 
                      NUM_PACKETS * sizeof(PacketResult), cudaMemcpyDeviceToHost));
+    
+    // Copy processed packets back to host (CRITICAL: needed for status verification)
+    CHECK_CUDA_ERROR(cudaMemcpy(g_test_packets, d_packets, 
+                     NUM_PACKETS * sizeof(Packet), cudaMemcpyDeviceToHost));
     
     // Copy final queue state to check completion
     CHECK_CUDA_ERROR(cudaMemcpy(h_queue, d_queue, 
