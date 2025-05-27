@@ -92,7 +92,6 @@ inline long long runBasicProcessing() {
     CHECK_CUDA_ERROR(cudaDeviceSynchronize());
     auto kernel_end = std::chrono::high_resolution_clock::now();
     metrics.kernelTime = std::chrono::duration_cast<std::chrono::microseconds>(kernel_end - kernel_start).count();
-    printf("Kernel execution time: %lld us\n", metrics.kernelTime);
     
     // Copy results back to host
     CHECK_CUDA_ERROR(cudaMemcpy(g_test_results, d_results, 
@@ -106,6 +105,9 @@ inline long long runBasicProcessing() {
     
     // Calculate statistics
     calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Print kernel execution time (after timing)
+    printf("Kernel execution time: %lld us\n", metrics.kernelTime);
     
     // Print performance metrics
     printPerformanceMetrics("Stage 1: Basic Packet Processing", metrics);
@@ -198,13 +200,14 @@ inline long long runBatchSizeExploration(int batchSize) {
     metrics.avgBatchLatency = (double)metrics.totalTime / metrics.numBatches;
     metrics.avgPacketLatency = (double)metrics.totalTime / NUM_PACKETS;
     
+    // Calculate statistics
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Print timing results (after timing calculations)
     printf("Batch size %d: total=%lld us, transfer=%lld us, kernel=%lld us\n", 
            batchSize, metrics.totalTime, metrics.transferTime, metrics.kernelTime);
     printf("Average latency per batch: %.2f us, per packet: %.2f us\n", 
            metrics.avgBatchLatency, metrics.avgPacketLatency);
-    
-    // Calculate statistics
-    calculateResults(g_test_results, NUM_PACKETS, metrics);
     
     // Print performance metrics
     char stageTitle[100];

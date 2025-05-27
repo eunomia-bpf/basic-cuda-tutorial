@@ -11,14 +11,8 @@ __global__ void processPacketsBasic(Packet* packets, PacketResult* results, int 
         Packet* packet = &packets[tid];
         PacketResult* result = &results[tid];
         
-        // Record processing start time
-        packet->processingStart = clock64();
-        
         // Call the core packet processing function
         processPacketGPU(packet, result, tid);
-        
-        // Record processing end time
-        result->processingEnd = clock64();
         
         // Mark packet as processed
         packet->status = COMPLETED;
@@ -33,14 +27,8 @@ __global__ void processPacketsZeroCopy(Packet* packets, PacketResult* results, i
         Packet* packet = &packets[tid];
         PacketResult* result = &results[tid];
         
-        // Record processing start time
-        packet->processingStart = clock64();
-        
         // Call the core packet processing function
         processPacketGPU(packet, result, tid);
-        
-        // Record processing end time
-        result->processingEnd = clock64();
         
         // Mark packet as processed directly in host memory
         packet->status = COMPLETED;

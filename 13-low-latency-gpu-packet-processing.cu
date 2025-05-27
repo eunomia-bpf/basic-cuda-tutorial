@@ -134,7 +134,7 @@ long long runPinnedMemoryProcessing(int batchSize) {
     // Reset packet status
     resetPacketStatus();
     
-    // Allocate pinned memory for host
+    // Allocate pinned memory for host (setup - outside timing)
     Packet* h_pinned_packets;
     PacketResult* h_pinned_results;
     
@@ -143,14 +143,14 @@ long long runPinnedMemoryProcessing(int batchSize) {
     CHECK_CUDA_ERROR(cudaHostAlloc(&h_pinned_results, batchSize * sizeof(PacketResult), 
                      cudaHostAllocDefault));
     
-    // Allocate device memory
+    // Allocate device memory (setup - outside timing)
     Packet* d_packets;
     PacketResult* d_results;
     
     CHECK_CUDA_ERROR(cudaMalloc(&d_packets, batchSize * sizeof(Packet)));
     CHECK_CUDA_ERROR(cudaMalloc(&d_results, batchSize * sizeof(PacketResult)));
     
-    // Measure performance
+    // Measure only the actual processing performance
     auto start = std::chrono::high_resolution_clock::now();
     
     long long total_transfer_time = 0;
@@ -199,27 +199,27 @@ long long runPinnedMemoryProcessing(int batchSize) {
                currentBatchSize * sizeof(PacketResult));
     }
     
-    // Calculate total time
+    // End timing before any printf statements
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     
-    // Store metrics
+    // Store metrics (after timing)
     metrics.totalTime = duration;
     metrics.transferTime = total_transfer_time;
     metrics.kernelTime = total_kernel_time;
     
+    // Calculate statistics (after timing)
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Print performance metrics (after timing)
     printf("Transfer time: %lld us, Kernel time: %lld us\n", 
            metrics.transferTime, metrics.kernelTime);
     
-    // Calculate statistics
-    calculateResults(g_test_results, NUM_PACKETS, metrics);
-    
-    // Print performance metrics
     char stageTitle[100];
     snprintf(stageTitle, sizeof(stageTitle), "Stage 2: Pinned Memory Optimization (Batch Size = %d)", batchSize);
     printPerformanceMetrics(stageTitle, metrics);
     
-    // Cleanup
+    // Cleanup (after timing)
     CHECK_CUDA_ERROR(cudaFreeHost(h_pinned_packets));
     CHECK_CUDA_ERROR(cudaFreeHost(h_pinned_results));
     CHECK_CUDA_ERROR(cudaFree(d_packets));
@@ -244,13 +244,13 @@ long long runBatchedStreamProcessing(int batchSize) {
     // Reset packet status
     resetPacketStatus();
     
-    // Create CUDA streams
+    // Create CUDA streams (setup - outside timing)
     cudaStream_t streams[NUM_STREAMS];
     for (int i = 0; i < NUM_STREAMS; i++) {
         CHECK_CUDA_ERROR(cudaStreamCreate(&streams[i]));
     }
     
-    // Allocate pinned memory for packets and results
+    // Allocate pinned memory for packets and results (setup - outside timing)
     Packet* h_packets[MAX_BATCHES];
     PacketResult* h_results[MAX_BATCHES];
     
@@ -261,7 +261,7 @@ long long runBatchedStreamProcessing(int batchSize) {
                          cudaHostAllocDefault));
     }
     
-    // Allocate device memory for each batch
+    // Allocate device memory for each batch (setup - outside timing)
     Packet* d_packets[MAX_BATCHES];
     PacketResult* d_results[MAX_BATCHES];
     
@@ -273,7 +273,7 @@ long long runBatchedStreamProcessing(int batchSize) {
     // Kernel launch parameters
     int blockSize = 256;
     
-    // Measure performance with batched stream processing
+    // Measure only the actual processing performance
     auto start = std::chrono::high_resolution_clock::now();
     
     // Process all batches
@@ -336,26 +336,26 @@ long long runBatchedStreamProcessing(int batchSize) {
                currentBatchSize * sizeof(PacketResult));
     }
     
-    // Calculate total time
+    // End timing before any calculations or cleanup
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     
-    // Store metrics
+    // Store metrics (after timing)
     metrics.totalTime = duration;
     
-    // Calculate average latency per batch and per packet
+    // Calculate average latency per batch and per packet (after timing)
     metrics.avgBatchLatency = (double)duration / metrics.numBatches;
     metrics.avgPacketLatency = (double)duration / NUM_PACKETS;
     
-    // Calculate statistics
+    // Calculate statistics (after timing)
     calculateResults(g_test_results, NUM_PACKETS, metrics);
     
-    // Print performance metrics
+    // Print performance metrics (after timing)
     char stageTitle[100];
     snprintf(stageTitle, sizeof(stageTitle), "Stage 3: Batched Streams (Batch Size = %d)", batchSize);
     printPerformanceMetrics(stageTitle, metrics);
     
-    // Cleanup
+    // Cleanup (after timing)
     for (int i = 0; i < MAX_BATCHES; i++) {
         CHECK_CUDA_ERROR(cudaFreeHost(h_packets[i]));
         CHECK_CUDA_ERROR(cudaFreeHost(h_results[i]));
@@ -388,7 +388,7 @@ long long runZeroCopyProcessing(int batchSize) {
     // Reset packet status
     resetPacketStatus();
     
-    // Allocate zero-copy (mapped) memory
+    // Allocate zero-copy (mapped) memory (setup - outside timing)
     Packet* h_zero_copy_packets;
     PacketResult* h_zero_copy_results;
     
@@ -397,14 +397,14 @@ long long runZeroCopyProcessing(int batchSize) {
     CHECK_CUDA_ERROR(cudaHostAlloc(&h_zero_copy_results, batchSize * sizeof(PacketResult), 
                      cudaHostAllocMapped));
     
-    // Get device pointers to the mapped memory
+    // Get device pointers to the mapped memory (setup - outside timing)
     Packet* d_zero_copy_packets;
     PacketResult* d_zero_copy_results;
     
     CHECK_CUDA_ERROR(cudaHostGetDevicePointer(&d_zero_copy_packets, h_zero_copy_packets, 0));
     CHECK_CUDA_ERROR(cudaHostGetDevicePointer(&d_zero_copy_results, h_zero_copy_results, 0));
     
-    // Measure performance
+    // Measure only the actual processing performance
     auto start = std::chrono::high_resolution_clock::now();
     
     // Process packets in batches
@@ -433,22 +433,22 @@ long long runZeroCopyProcessing(int batchSize) {
                currentBatchSize * sizeof(PacketResult));
     }
     
-    // Calculate total time
+    // End timing before any calculations or cleanup
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     
-    // Store metrics
+    // Store metrics (after timing)
     metrics.totalTime = duration;
     
-    // Calculate statistics
+    // Calculate statistics (after timing)
     calculateResults(g_test_results, NUM_PACKETS, metrics);
     
-    // Print performance metrics
+    // Print performance metrics (after timing)
     char stageTitle[100];
     snprintf(stageTitle, sizeof(stageTitle), "Stage 4: Zero-Copy Memory (Batch Size = %d)", batchSize);
     printPerformanceMetrics(stageTitle, metrics);
     
-    // Cleanup
+    // Cleanup (after timing)
     CHECK_CUDA_ERROR(cudaFreeHost(h_zero_copy_packets));
     CHECK_CUDA_ERROR(cudaFreeHost(h_zero_copy_results));
     
@@ -482,7 +482,7 @@ long long runCudaGraphsProcessing(int batchSize) {
     // Reset packet status
     resetPacketStatus();
     
-    // Allocate pinned memory for host
+    // Allocate pinned memory for host (setup - outside timing)
     Packet* h_batch_packets;
     PacketResult* h_batch_results;
     
@@ -491,22 +491,22 @@ long long runCudaGraphsProcessing(int batchSize) {
     CHECK_CUDA_ERROR(cudaHostAlloc(&h_batch_results, batchSize * sizeof(PacketResult), 
                      cudaHostAllocDefault));
     
-    // Allocate device memory
+    // Allocate device memory (setup - outside timing)
     Packet* d_batch_packets;
     PacketResult* d_batch_results;
     
     CHECK_CUDA_ERROR(cudaMalloc(&d_batch_packets, batchSize * sizeof(Packet)));
     CHECK_CUDA_ERROR(cudaMalloc(&d_batch_results, batchSize * sizeof(PacketResult)));
     
-    // Create CUDA stream
+    // Create CUDA stream (setup - outside timing)
     cudaStream_t stream;
     CHECK_CUDA_ERROR(cudaStreamCreate(&stream));
     
-    // Create CUDA graph
+    // Create CUDA graph (setup - outside timing)
     cudaGraph_t graph;
     cudaGraphExec_t graphExec;
     
-    // Capture graph once for a typical batch
+    // Capture graph once for a typical batch (setup - outside timing)
     {
         // Fill a batch with test packets
         memcpy(h_batch_packets, g_test_packets, batchSize * sizeof(Packet));
@@ -536,7 +536,7 @@ long long runCudaGraphsProcessing(int batchSize) {
         CHECK_CUDA_ERROR(cudaGraphInstantiate(&graphExec, graph, NULL, NULL, 0));
     }
     
-    // Measure performance using the graph
+    // Measure only the actual processing performance
     auto start = std::chrono::high_resolution_clock::now();
     
     std::vector<long long> launchTimes;
@@ -566,31 +566,31 @@ long long runCudaGraphsProcessing(int batchSize) {
         memcpy(g_test_results + offset, h_batch_results, currentBatchSize * sizeof(PacketResult));
     }
     
-    // Calculate total time
+    // End timing before any calculations or cleanup
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     
-    // Store metrics
+    // Store metrics (after timing)
     metrics.totalTime = duration;
     
-    // Calculate average launch time
+    // Calculate average launch time (after timing)
     double avgLaunchTime = 0;
     for (long long time : launchTimes) {
         avgLaunchTime += time;
     }
     avgLaunchTime /= launchTimes.size();
     
-    printf("Average graph launch time per batch: %.2f us\n", avgLaunchTime);
-    
-    // Calculate statistics
+    // Calculate statistics (after timing)
     calculateResults(g_test_results, NUM_PACKETS, metrics);
     
-    // Print performance metrics
+    // Print performance metrics (after timing)
+    printf("Average graph launch time per batch: %.2f us\n", avgLaunchTime);
+    
     char stageTitle[100];
     snprintf(stageTitle, sizeof(stageTitle), "Stage 6: CUDA Graphs (Batch Size = %d)", batchSize);
     printPerformanceMetrics(stageTitle, metrics);
     
-    // Cleanup
+    // Cleanup (after timing)
     CHECK_CUDA_ERROR(cudaGraphDestroy(graph));
     CHECK_CUDA_ERROR(cudaGraphExecDestroy(graphExec));
     CHECK_CUDA_ERROR(cudaStreamDestroy(stream));

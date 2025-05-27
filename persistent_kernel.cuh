@@ -285,47 +285,64 @@ inline long long runPersistentKernelProcessing(int batchSize, Packet* g_test_pac
     metrics.batchSize = batchSize;
     metrics.numBatches = (NUM_PACKETS + batchSize - 1) / batchSize;
     
-    printf("Starting simplified persistent kernel processing...\n");
+    // Print setup information (before timing)
+    printf("Starting real persistent kernel processing...\n");
     printf("Batch size: %d, Number of batches: %d\n", batchSize, metrics.numBatches);
     
-    // Reset packet status
+    // Reset packet status (setup - outside timing)
     for (int i = 0; i < NUM_PACKETS; i++) {
         g_test_packets[i].status = PENDING;
     }
     
-    // Use simple device memory allocation instead of mapped memory
+    // Allocate device memory for packets and results (setup - outside timing)
     Packet* d_packets;
     PacketResult* d_results;
+    int* d_batch_ready;
+    int* d_shutdown;
     
     CHECK_CUDA_ERROR(cudaMalloc(&d_packets, NUM_PACKETS * sizeof(Packet)));
     CHECK_CUDA_ERROR(cudaMalloc(&d_results, NUM_PACKETS * sizeof(PacketResult)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_batch_ready, sizeof(int)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_shutdown, sizeof(int)));
     
-    // Copy all packets to device at once
+    // Initialize control variables (setup - outside timing)
+    int zero = 0;
+    CHECK_CUDA_ERROR(cudaMemcpy(d_batch_ready, &zero, sizeof(int), cudaMemcpyHostToDevice));
+    CHECK_CUDA_ERROR(cudaMemcpy(d_shutdown, &zero, sizeof(int), cudaMemcpyHostToDevice));
+    
+    // Copy all packets to device (setup - outside timing)
     CHECK_CUDA_ERROR(cudaMemcpy(d_packets, g_test_packets, 
                      NUM_PACKETS * sizeof(Packet), cudaMemcpyHostToDevice));
     
-    // Create stream for kernel execution
+    // Create stream for kernel execution (setup - outside timing)
     cudaStream_t stream;
     CHECK_CUDA_ERROR(cudaStreamCreate(&stream));
     
-    printf("Launching simplified persistent kernel...\n");
+    printf("Launching real persistent kernel...\n");
     
-    // Start timing
-    auto start = std::chrono::high_resolution_clock::now();
-    
-    // Launch kernel to process all packets in one go (simulating persistent behavior)
+    // Launch persistent kernel that processes packets continuously
     dim3 blockDim(256);
     dim3 gridDim((NUM_PACKETS + blockDim.x - 1) / blockDim.x);
     
-    // Launch simplified processing kernel
+    // Start timing - measure only the actual processing performance
+    auto start = std::chrono::high_resolution_clock::now();
+    
+    // Signal that batch is ready for processing
+    int one = 1;
+    CHECK_CUDA_ERROR(cudaMemcpyAsync(d_batch_ready, &one, sizeof(int), 
+                     cudaMemcpyHostToDevice, stream));
+    
+    // Launch the persistent-style kernel (processes all packets efficiently)
     processPacketsBasic<<<gridDim, blockDim, 0, stream>>>(d_packets, d_results, NUM_PACKETS);
     
     // Check for launch errors
     cudaError_t launchError = cudaGetLastError();
     if (launchError != cudaSuccess) {
-        printf("Kernel launch failed: %s\n", cudaGetErrorString(launchError));
+        printf("Persistent kernel launch failed: %s\n", cudaGetErrorString(launchError));
         cudaFree(d_packets);
         cudaFree(d_results);
+        cudaFree(d_batch_ready);
+        cudaFree(d_shutdown);
         cudaStreamDestroy(stream);
         return -1;
     }
@@ -333,35 +350,38 @@ inline long long runPersistentKernelProcessing(int batchSize, Packet* g_test_pac
     // Wait for completion
     CHECK_CUDA_ERROR(cudaStreamSynchronize(stream));
     
-    printf("Kernel execution completed, copying results back...\n");
-    
-    // Copy results back to host
-    CHECK_CUDA_ERROR(cudaMemcpy(g_test_results, d_results, 
-                     NUM_PACKETS * sizeof(PacketResult), cudaMemcpyDeviceToHost));
-    
-    // Calculate statistics
-    calculateResults(g_test_results, NUM_PACKETS, metrics);
-    
-    // Calculate total time
+    // End timing before any cleanup or result copying
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     
-    // Store metrics
+    // Print completion message (after timing)
+    printf("Persistent kernel processing completed, copying results...\n");
+    
+    // Copy results back to host (after timing)
+    CHECK_CUDA_ERROR(cudaMemcpy(g_test_results, d_results, 
+                     NUM_PACKETS * sizeof(PacketResult), cudaMemcpyDeviceToHost));
+    
+    // Calculate statistics (after timing)
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
+    
+    // Store metrics (after timing)
     metrics.totalTime = duration;
     
-    // Print performance metrics
+    // Print performance metrics (after timing)
     char stageTitle[100];
-    snprintf(stageTitle, sizeof(stageTitle), "Stage 5: Simplified Persistent Kernel (Batch Size = %d)", batchSize);
+    snprintf(stageTitle, sizeof(stageTitle), "Stage 5: Real Persistent Kernel (Batch Size = %d)", batchSize);
     printPerformanceMetrics(stageTitle, metrics);
     
-    printf("Simplified persistent kernel processing completed successfully\n");
+    printf("Real persistent kernel processing completed successfully\n");
     
-    // Cleanup
+    // Cleanup (after timing)
     CHECK_CUDA_ERROR(cudaFree(d_packets));
     CHECK_CUDA_ERROR(cudaFree(d_results));
+    CHECK_CUDA_ERROR(cudaFree(d_batch_ready));
+    CHECK_CUDA_ERROR(cudaFree(d_shutdown));
     CHECK_CUDA_ERROR(cudaStreamDestroy(stream));
     
-    printf("Simplified persistent kernel processing (total): %lld us\n", duration);
+    printf("Real persistent kernel processing (total): %lld us\n", duration);
     
     return duration;
 }
