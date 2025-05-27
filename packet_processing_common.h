@@ -163,7 +163,6 @@ void processPacketCPU(const Packet* packet, PacketResult* result, int packetId) 
 
 // Print performance metrics in a standardized format
 void printPerformanceMetrics(const char* stageName, const PerformanceMetrics& metrics) {
-    printf("\n=== %s ===\n", stageName);
     printf("Batch size: %d packets\n", metrics.batchSize);
     printf("Total time: %lld us\n", metrics.totalTime);
     

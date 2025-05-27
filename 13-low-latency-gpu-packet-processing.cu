@@ -97,7 +97,7 @@ long long runCPUProcessing() {
     resetPacketStatus();
     
     // Measure CPU performance
-    START_TIMER
+    auto start = std::chrono::high_resolution_clock::now();
     
     // Process packets on CPU
     for (int i = 0; i < NUM_PACKETS; i++) {
@@ -105,13 +105,19 @@ long long runCPUProcessing() {
         g_test_packets[i].status = COMPLETED;
     }
     
+    // Calculate total time
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    metrics.totalTime = duration;
+    
     // Calculate statistics
     calculateResults(g_test_results, NUM_PACKETS, metrics);
     
     // Print performance metrics
     printPerformanceMetrics("Stage 0: CPU-based Processing (Baseline)", metrics);
     
-    STOP_TIMER("CPU processing (total)");
+    printf("CPU processing (total): %lld us\n", duration);
+    return duration;
 }
 
 /******************************************************************************
@@ -145,7 +151,7 @@ long long runPinnedMemoryProcessing(int batchSize) {
     CHECK_CUDA_ERROR(cudaMalloc(&d_results, batchSize * sizeof(PacketResult)));
     
     // Measure performance
-    START_TIMER
+    auto start = std::chrono::high_resolution_clock::now();
     
     long long total_transfer_time = 0;
     long long total_kernel_time = 0;
@@ -193,7 +199,12 @@ long long runPinnedMemoryProcessing(int batchSize) {
                currentBatchSize * sizeof(PacketResult));
     }
     
+    // Calculate total time
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
     // Store metrics
+    metrics.totalTime = duration;
     metrics.transferTime = total_transfer_time;
     metrics.kernelTime = total_kernel_time;
     
@@ -214,7 +225,8 @@ long long runPinnedMemoryProcessing(int batchSize) {
     CHECK_CUDA_ERROR(cudaFree(d_packets));
     CHECK_CUDA_ERROR(cudaFree(d_results));
     
-    STOP_TIMER("Pinned memory processing (total)");
+    printf("Pinned memory processing (total): %lld us\n", duration);
+    return duration;
 }
 
 /******************************************************************************
@@ -262,7 +274,7 @@ long long runBatchedStreamProcessing(int batchSize) {
     int blockSize = 256;
     
     // Measure performance with batched stream processing
-    START_TIMER
+    auto start = std::chrono::high_resolution_clock::now();
     
     // Process all batches
     for (int batch = 0; batch < metrics.numBatches; batch++) {
@@ -324,9 +336,16 @@ long long runBatchedStreamProcessing(int batchSize) {
                currentBatchSize * sizeof(PacketResult));
     }
     
+    // Calculate total time
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    // Store metrics
+    metrics.totalTime = duration;
+    
     // Calculate average latency per batch and per packet
-    metrics.avgBatchLatency = 0; // Will be calculated after we get total time
-    metrics.avgPacketLatency = 0; // Will be calculated after we get total time
+    metrics.avgBatchLatency = (double)duration / metrics.numBatches;
+    metrics.avgPacketLatency = (double)duration / NUM_PACKETS;
     
     // Calculate statistics
     calculateResults(g_test_results, NUM_PACKETS, metrics);
@@ -348,7 +367,8 @@ long long runBatchedStreamProcessing(int batchSize) {
         CHECK_CUDA_ERROR(cudaStreamDestroy(streams[i]));
     }
     
-    STOP_TIMER("Batched stream processing (total)");
+    printf("Batched stream processing (total): %lld us\n", duration);
+    return duration;
 }
 
 /******************************************************************************
@@ -385,7 +405,7 @@ long long runZeroCopyProcessing(int batchSize) {
     CHECK_CUDA_ERROR(cudaHostGetDevicePointer(&d_zero_copy_results, h_zero_copy_results, 0));
     
     // Measure performance
-    START_TIMER
+    auto start = std::chrono::high_resolution_clock::now();
     
     // Process packets in batches
     for (int batch = 0; batch < metrics.numBatches; batch++) {
@@ -413,6 +433,13 @@ long long runZeroCopyProcessing(int batchSize) {
                currentBatchSize * sizeof(PacketResult));
     }
     
+    // Calculate total time
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    // Store metrics
+    metrics.totalTime = duration;
+    
     // Calculate statistics
     calculateResults(g_test_results, NUM_PACKETS, metrics);
     
@@ -425,7 +452,8 @@ long long runZeroCopyProcessing(int batchSize) {
     CHECK_CUDA_ERROR(cudaFreeHost(h_zero_copy_packets));
     CHECK_CUDA_ERROR(cudaFreeHost(h_zero_copy_results));
     
-    STOP_TIMER("Zero-copy processing (total)");
+    printf("Zero-copy processing (total): %lld us\n", duration);
+    return duration;
 }
 
 /******************************************************************************
@@ -509,7 +537,7 @@ long long runCudaGraphsProcessing(int batchSize) {
     }
     
     // Measure performance using the graph
-    START_TIMER
+    auto start = std::chrono::high_resolution_clock::now();
     
     std::vector<long long> launchTimes;
     launchTimes.reserve(metrics.numBatches);
@@ -538,6 +566,13 @@ long long runCudaGraphsProcessing(int batchSize) {
         memcpy(g_test_results + offset, h_batch_results, currentBatchSize * sizeof(PacketResult));
     }
     
+    // Calculate total time
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    // Store metrics
+    metrics.totalTime = duration;
+    
     // Calculate average launch time
     double avgLaunchTime = 0;
     for (long long time : launchTimes) {
@@ -564,7 +599,8 @@ long long runCudaGraphsProcessing(int batchSize) {
     CHECK_CUDA_ERROR(cudaFree(d_batch_packets));
     CHECK_CUDA_ERROR(cudaFree(d_batch_results));
     
-    STOP_TIMER("CUDA Graphs processing (total)");
+    printf("CUDA Graphs processing (total): %lld us\n", duration);
+    return duration;
 }
 
 /******************************************************************************

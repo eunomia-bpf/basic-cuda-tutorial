@@ -342,6 +342,13 @@ inline long long runPersistentKernelProcessing(int batchSize, Packet* g_test_pac
     // Calculate statistics
     calculateResults(g_test_results, NUM_PACKETS, metrics);
     
+    // Calculate total time
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    // Store metrics
+    metrics.totalTime = duration;
+    
     // Print performance metrics
     char stageTitle[100];
     snprintf(stageTitle, sizeof(stageTitle), "Stage 5: Simplified Persistent Kernel (Batch Size = %d)", batchSize);
@@ -354,9 +361,6 @@ inline long long runPersistentKernelProcessing(int batchSize, Packet* g_test_pac
     CHECK_CUDA_ERROR(cudaFree(d_results));
     CHECK_CUDA_ERROR(cudaStreamDestroy(stream));
     
-    // Calculate total time
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     printf("Simplified persistent kernel processing (total): %lld us\n", duration);
     
     return duration;

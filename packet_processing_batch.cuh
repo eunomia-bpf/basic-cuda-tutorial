@@ -73,8 +73,8 @@ inline long long runBasicProcessing() {
     CHECK_CUDA_ERROR(cudaMalloc(&d_packets, NUM_PACKETS * sizeof(Packet)));
     CHECK_CUDA_ERROR(cudaMalloc(&d_results, NUM_PACKETS * sizeof(PacketResult)));
     
-    // Use timer macros for overall timing
-    START_TIMER
+    // Use manual timing for better control
+    auto start = std::chrono::high_resolution_clock::now();
     
     // Copy packets to device
     CHECK_CUDA_ERROR(cudaMemcpy(d_packets, g_test_packets, 
@@ -99,6 +99,11 @@ inline long long runBasicProcessing() {
                      NUM_PACKETS * sizeof(PacketResult), 
                      cudaMemcpyDeviceToHost));
     
+    // Calculate total time
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    metrics.totalTime = duration;
+    
     // Calculate statistics
     calculateResults(g_test_results, NUM_PACKETS, metrics);
     
@@ -109,8 +114,8 @@ inline long long runBasicProcessing() {
     CHECK_CUDA_ERROR(cudaFree(d_packets));
     CHECK_CUDA_ERROR(cudaFree(d_results));
     
-    // Return total time
-    STOP_TIMER("Basic processing (total)");
+    printf("Basic processing (total): %lld us\n", duration);
+    return duration;
 }
 
 /******************************************************************************
@@ -140,7 +145,7 @@ inline long long runBatchSizeExploration(int batchSize) {
     CHECK_CUDA_ERROR(cudaMalloc(&d_results, batchSize * sizeof(PacketResult)));
     
     // Measure performance
-    START_TIMER
+    auto start = std::chrono::high_resolution_clock::now();
     
     long long total_transfer_time = 0;
     long long total_kernel_time = 0;
@@ -180,23 +185,16 @@ inline long long runBatchSizeExploration(int batchSize) {
                          cudaMemcpyDeviceToHost));
     }
     
-    // Store metrics before stopping timer
+    // Get total time and update metrics
+    auto end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    
+    // Store metrics
+    metrics.totalTime = duration;
     metrics.transferTime = total_transfer_time;
     metrics.kernelTime = total_kernel_time;
     
     // Calculate average latency
-    metrics.avgBatchLatency = 0; // Will be set after we get total time
-    metrics.avgPacketLatency = 0; // Will be set after we get total time
-    
-    // Calculate statistics
-    calculateResults(g_test_results, NUM_PACKETS, metrics);
-    
-    // Get total time and update latency metrics
-    auto end = std::chrono::high_resolution_clock::now();
-    auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-    metrics.totalTime = duration;
-    
-    // Now calculate the latency metrics
     metrics.avgBatchLatency = (double)metrics.totalTime / metrics.numBatches;
     metrics.avgPacketLatency = (double)metrics.totalTime / NUM_PACKETS;
     
@@ -204,6 +202,9 @@ inline long long runBatchSizeExploration(int batchSize) {
            batchSize, metrics.totalTime, metrics.transferTime, metrics.kernelTime);
     printf("Average latency per batch: %.2f us, per packet: %.2f us\n", 
            metrics.avgBatchLatency, metrics.avgPacketLatency);
+    
+    // Calculate statistics
+    calculateResults(g_test_results, NUM_PACKETS, metrics);
     
     // Print performance metrics
     char stageTitle[100];
@@ -219,8 +220,6 @@ inline long long runBatchSizeExploration(int batchSize) {
 
 // Function to find the optimal batch size
 inline int findOptimalBatchSize(int batchSizesToTest[], int numBatchSizes) {
-    printf("\n=== Batch Size Exploration ===\n");
-    
     int optimalBatchSize = batchSizesToTest[0];
     long long bestTime = LLONG_MAX;
     
