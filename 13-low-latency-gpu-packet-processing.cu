@@ -26,9 +26,9 @@
 #include <random>
 #include <mutex>
 #include <condition_variable>
-#include "packet_processing_common.h"
-#include "packet_processing_kernels.cuh"
-#include "packet_processing_batch.cuh"
+#include "lib/packet_processing_common.h"
+#include "lib/packet_processing_kernels.cuh"
+#include "lib/packet_processing_batch.cuh"
 
 // Error checking macro
 #define CHECK_CUDA_ERROR(call) \
