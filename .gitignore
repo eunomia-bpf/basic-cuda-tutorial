@@ -83,3 +83,8 @@ build/
 *.swp
 *~
 packet_processing
+14-cuda-function-annotations
+ptx_demo
+simple_ptx_demo
+
+15-opencl-vector-addition
