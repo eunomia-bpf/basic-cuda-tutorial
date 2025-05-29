@@ -9,117 +9,117 @@ Testing with 10000 packets
 
 === Stage 0: CPU-based Processing (Baseline) ===
 Batch size: 10000 packets
-Total time: 5113 us
+Total time: 4379 us
 Average latency per packet: 0.00 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
-CPU processing (total): 5113 us
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
+CPU processing (total): 4379 us
 
 === Stage 1: Basic Packet Processing ===
-Kernel execution time: 765 us
+Kernel execution time: 674 us
 Batch size: 10000 packets
-Total time: 4254 us
-Kernel time: 765 us (18.0%)
+Total time: 4214 us
+Kernel time: 674 us (16.0%)
 Average latency per packet: 0.00 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
-Basic processing (total): 4254 us
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
+Basic processing (total): 4214 us
 
 === Batch Size Exploration ===
 
 --- Testing Batch Size = 32 ---
-Batch size 32: total=127612 us, transfer=4177 us, kernel=120955 us
-Average latency per batch: 407.71 us, per packet: 12.76 us
+Batch size 32: total=127704 us, transfer=4109 us, kernel=121134 us
+Average latency per batch: 408.00 us, per packet: 12.77 us
 Batch size: 32 packets
-Total time: 127612 us
-Transfer time: 4177 us (3.3%)
-Kernel time: 120955 us (94.8%)
-Average latency per batch: 407.71 us
-Average latency per packet: 12.76 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
+Total time: 127704 us
+Transfer time: 4109 us (3.2%)
+Kernel time: 121134 us (94.9%)
+Average latency per batch: 408.00 us
+Average latency per packet: 12.77 us
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
 
 --- Testing Batch Size = 64 ---
-Batch size 64: total=67214 us, transfer=3474 us, kernel=62454 us
-Average latency per batch: 428.11 us, per packet: 6.72 us
+Batch size 64: total=67056 us, transfer=3242 us, kernel=62513 us
+Average latency per batch: 427.11 us, per packet: 6.71 us
 Batch size: 64 packets
-Total time: 67214 us
-Transfer time: 3474 us (5.2%)
-Kernel time: 62454 us (92.9%)
-Average latency per batch: 428.11 us
-Average latency per packet: 6.72 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
+Total time: 67056 us
+Transfer time: 3242 us (4.8%)
+Kernel time: 62513 us (93.2%)
+Average latency per batch: 427.11 us
+Average latency per packet: 6.71 us
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
 
 --- Testing Batch Size = 128 ---
-Batch size 128: total=36334 us, transfer=3319 us, kernel=32322 us
-Average latency per batch: 459.92 us, per packet: 3.63 us
+Batch size 128: total=36328 us, transfer=3028 us, kernel=32609 us
+Average latency per batch: 459.85 us, per packet: 3.63 us
 Batch size: 128 packets
-Total time: 36334 us
-Transfer time: 3319 us (9.1%)
-Kernel time: 32322 us (89.0%)
-Average latency per batch: 459.92 us
+Total time: 36328 us
+Transfer time: 3028 us (8.3%)
+Kernel time: 32609 us (89.8%)
+Average latency per batch: 459.85 us
 Average latency per packet: 3.63 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
 
 --- Testing Batch Size = 256 ---
-Batch size 256: total=20547 us, transfer=3319 us, kernel=16837 us
-Average latency per batch: 513.67 us, per packet: 2.05 us
+Batch size 256: total=20240 us, transfer=2966 us, kernel=16889 us
+Average latency per batch: 506.00 us, per packet: 2.02 us
 Batch size: 256 packets
-Total time: 20547 us
-Transfer time: 3319 us (16.2%)
-Kernel time: 16837 us (81.9%)
-Average latency per batch: 513.67 us
-Average latency per packet: 2.05 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
+Total time: 20240 us
+Transfer time: 2966 us (14.7%)
+Kernel time: 16889 us (83.4%)
+Average latency per batch: 506.00 us
+Average latency per packet: 2.02 us
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
 
 --- Testing Batch Size = 512 ---
-Batch size 512: total=13241 us, transfer=3191 us, kernel=9795 us
-Average latency per batch: 662.05 us, per packet: 1.32 us
+Batch size 512: total=12977 us, transfer=2924 us, kernel=9799 us
+Average latency per batch: 648.85 us, per packet: 1.30 us
 Batch size: 512 packets
-Total time: 13241 us
-Transfer time: 3191 us (24.1%)
-Kernel time: 9795 us (74.0%)
-Average latency per batch: 662.05 us
-Average latency per packet: 1.32 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
+Total time: 12977 us
+Transfer time: 2924 us (22.5%)
+Kernel time: 9799 us (75.5%)
+Average latency per batch: 648.85 us
+Average latency per packet: 1.30 us
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
 
 --- Testing Batch Size = 1024 ---
-Batch size 1024: total=8517 us, transfer=3243 us, kernel=5090 us
-Average latency per batch: 851.70 us, per packet: 0.85 us
+Batch size 1024: total=8348 us, transfer=2942 us, kernel=5222 us
+Average latency per batch: 834.80 us, per packet: 0.83 us
 Batch size: 1024 packets
-Total time: 8517 us
-Transfer time: 3243 us (38.1%)
-Kernel time: 5090 us (59.8%)
-Average latency per batch: 851.70 us
-Average latency per packet: 0.85 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
+Total time: 8348 us
+Transfer time: 2942 us (35.2%)
+Kernel time: 5222 us (62.6%)
+Average latency per batch: 834.80 us
+Average latency per packet: 0.83 us
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
 
 === Optimal Batch Size Found: 1024 ===
 
 === Running Optimizations with Optimal Batch Size: 1024 ===
 
 === Stage 2: Pinned Memory Optimization (Batch Size = 1024) ===
-Transfer time: 2526 us, Kernel time: 3665 us
+Transfer time: 2530 us, Kernel time: 3631 us
 Batch size: 1024 packets
-Total time: 6297 us
-Transfer time: 2526 us (40.1%)
-Kernel time: 3665 us (58.2%)
+Total time: 6268 us
+Transfer time: 2530 us (40.4%)
+Kernel time: 3631 us (57.9%)
 Average latency per packet: 0.00 us
-Processed 10000 packets: 9128 drops, 145 forwards, 727 modifies
-Pinned memory processing (total): 6297 us
+Processed 10000 packets: 9128 drops, 147 forwards, 725 modifies
+Pinned memory processing (total): 6268 us
 
 === Stage 3: Batched Processing with Streams (Batch Size = 1024) ===
 Batch size: 1024 packets
-Total time: 3646 us
-Average latency per batch: 364.60 us
-Average latency per packet: 0.36 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
-Batched stream processing (total): 3646 us
+Total time: 3242 us
+Average latency per batch: 324.20 us
+Average latency per packet: 0.32 us
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
+Batched stream processing (total): 3242 us
 
 === Stage 4: Zero-Copy Memory (Batch Size = 1024) ===
 Batch size: 1024 packets
-Total time: 61641 us
+Total time: 61539 us
 Average latency per packet: 0.00 us
-Processed 10000 packets: 1474 drops, 1559 forwards, 6967 modifies
-Zero-copy cudaDeviceSynchronize time: 61630 us (99.98% of total time)
-Zero-copy processing (total): 61641 us
+Processed 10000 packets: 1448 drops, 1573 forwards, 6979 modifies
+Zero-copy cudaDeviceSynchronize time: 61529 us (99.98% of total time)
+Zero-copy processing (total): 61539 us
 
 === Stage 5: Real Persistent Kernel (Batch Size = 1024) ===
 Starting batch-based persistent kernel processing...
@@ -130,31 +130,31 @@ All work submitted and processed, finalizing...
 Persistent kernel completed, copying results...
 Final work queue head: 9216, tail: 10000
 Batch size: 1024 packets
-Total time: 205 us
-Average latency per batch: 20.50 us
+Total time: 204 us
+Average latency per batch: 20.40 us
 Average latency per packet: 0.02 us
 Processed 10000 packets: 10000 drops, 0 forwards, 0 modifies
 Batch-based persistent kernel processing completed successfully
 Warning: Packet 0 not completed (status: 0)
 Results verification: FAILED (0/10000 packets completed)
-Batch-based persistent kernel processing (total): 205 us
+Batch-based persistent kernel processing (total): 204 us
 
 === Stage 6: CUDA Graphs (Batch Size = 1024) ===
-Average graph launch time per batch: 281.50 us
+Average graph launch time per batch: 282.10 us
 Batch size: 1024 packets
-Total time: 4594 us
+Total time: 4534 us
 Average latency per packet: 0.00 us
 Processed 10000 packets: 0 drops, 10000 forwards, 0 modifies
-CUDA Graphs processing (total): 4594 us
+CUDA Graphs processing (total): 4534 us
 
 === Overall Performance Comparison ===
-CPU Baseline: 5113 us
-Basic GPU: 4254 us (1.20x vs CPU)
-Pinned Memory: 6297 us (0.81x vs CPU)
-Batched Streams: 3646 us (1.40x vs CPU)
-Zero-Copy: 61641 us (0.08x vs CPU)
-Real Persistent Kernel: 205 us (24.94x vs CPU)
-CUDA Graphs: 4594 us (1.11x vs CPU)
+CPU Baseline: 4379 us
+Basic GPU: 4214 us (1.04x vs CPU)
+Pinned Memory: 6268 us (0.70x vs CPU)
+Batched Streams: 3242 us (1.35x vs CPU)
+Zero-Copy: 61539 us (0.07x vs CPU)
+Real Persistent Kernel: 204 us (21.47x vs CPU)
+CUDA Graphs: 4534 us (0.97x vs CPU)
 
 === Optimization Techniques Demonstrated ===
 1. Basic processing - baseline
