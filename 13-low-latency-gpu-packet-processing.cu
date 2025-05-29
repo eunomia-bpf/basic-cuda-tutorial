@@ -137,17 +137,20 @@ long long runPinnedMemoryProcessing(int batchSize) {
     Packet* h_pinned_packets;
     PacketResult* h_pinned_results;
     
-    CHECK_CUDA_ERROR(cudaHostAlloc(&h_pinned_packets, batchSize * sizeof(Packet), 
+    CHECK_CUDA_ERROR(cudaHostAlloc(&h_pinned_packets, NUM_PACKETS * sizeof(Packet), 
                      cudaHostAllocDefault));
-    CHECK_CUDA_ERROR(cudaHostAlloc(&h_pinned_results, batchSize * sizeof(PacketResult), 
+    CHECK_CUDA_ERROR(cudaHostAlloc(&h_pinned_results, NUM_PACKETS * sizeof(PacketResult), 
                      cudaHostAllocDefault));
     
     // Allocate device memory (setup - outside timing)
     Packet* d_packets;
     PacketResult* d_results;
     
-    CHECK_CUDA_ERROR(cudaMalloc(&d_packets, batchSize * sizeof(Packet)));
-    CHECK_CUDA_ERROR(cudaMalloc(&d_results, batchSize * sizeof(PacketResult)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_packets, NUM_PACKETS * sizeof(Packet)));
+    CHECK_CUDA_ERROR(cudaMalloc(&d_results, NUM_PACKETS * sizeof(PacketResult)));
+    
+    // Copy from global to pinned memory
+    memcpy(h_pinned_packets, g_test_packets, NUM_PACKETS * sizeof(Packet));
     
     // Measure only the actual processing performance
     auto start = std::chrono::high_resolution_clock::now();
@@ -160,11 +163,7 @@ long long runPinnedMemoryProcessing(int batchSize) {
         int offset = batch * batchSize;
         int currentBatchSize = (batch == metrics.numBatches - 1) ? 
                              (NUM_PACKETS - batch * batchSize) : batchSize;
-        
-        // Copy from global to pinned memory
-        memcpy(h_pinned_packets, g_test_packets + offset, 
-               currentBatchSize * sizeof(Packet));
-        
+
         // Copy batch to device using pinned memory
         auto transfer_start = std::chrono::high_resolution_clock::now();
         
@@ -192,16 +191,16 @@ long long runPinnedMemoryProcessing(int batchSize) {
         CHECK_CUDA_ERROR(cudaMemcpy(h_pinned_results, d_results, 
                          currentBatchSize * sizeof(PacketResult), 
                          cudaMemcpyDeviceToHost));
-        
-        // Copy from pinned to global memory
-        memcpy(g_test_results + offset, h_pinned_results, 
-               currentBatchSize * sizeof(PacketResult));
+
     }
     
     // End timing before any printf statements
     auto end = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
     
+    // Copy from pinned to global memory
+    memcpy(g_test_results, h_pinned_results, NUM_PACKETS * sizeof(PacketResult));
+
     // Store metrics (after timing)
     metrics.totalTime = duration;
     metrics.transferTime = total_transfer_time;
