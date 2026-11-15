@@ -1,0 +1,77 @@
+name: CUDA examples on simulated H100
+
+# Optional, non-required check. The hosted runners have no GPU, so this builds
+# a subset of the examples and runs them on a simulated NVIDIA H100
+# (https://github.com/pantheongpu/pantheonsim). A simulator cannot reproduce
+# hardware-specific behavior or timing, so it complements real-GPU testing
+# and does not replace it.
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "0[1-7]-*.cu"
+      - "vector_add_kernel.cu"
+      - "Makefile"
+      - ".github/workflows/gpu-sim.yml"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  run-examples:
+    name: CUDA 12.6, simulated H100
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+    - name: Set up the simulated GPU and CUDA toolkit
+      uses: pantheongpu/setup-pantheonsim@656f502ef4782d94d34d8ddd368e333960609639 # v0.1.8
+      with:
+        gpu: nvidia/h100
+        cuda-toolkit: "12.6"
+
+    # ARCH=compute_90 gives PTX-only device code (the simulator JIT-compiles
+    # PTX and does not run SASS) and skips the Makefile's detect_arch step,
+    # which needs a real GPU. The simulator also needs a shared CUDA runtime.
+    - name: Build
+      run: |
+        make -j3 NVCC="nvcc -cudart shared" ARCH=compute_90 \
+          01-vector-addition 02-ptx-assembly 04-gpu-architecture \
+          05-neural-network 06-cnn-convolution 07-attention-mechanism
+
+    # Each example is run under vgpu and must exit 0 and print the line that
+    # shows it ran on the H100 and got the right answer. 01, 02 and 06 check
+    # their own results. 04 only prints the device properties, so it is the
+    # check that a device was found. 05 and 07 are deterministic and print no
+    # self-check, so their printed numbers are compared with the values
+    # recorded on a real GPU.
+    - name: Run
+      run: |
+        run() {  # run <example> <expected line>...
+          local ex=$1; shift
+          echo "::group::$ex"
+          vgpu run "./$ex" 2>&1 | tee "$ex.log"
+          local rc=${PIPESTATUS[0]}
+          echo "::endgroup::"
+          if [ "$rc" -ne 0 ]; then echo "::error::$ex exited with $rc"; exit 1; fi
+          for pat in "$@"; do
+            grep -q -F -- "$pat" "$ex.log" || { echo "::error::$ex: missing '$pat'"; exit 1; }
+          done
+        }
+        run 04-gpu-architecture "Found 1 CUDA device(s)" "Device 0: NVIDIA H100"
+        run 01-vector-addition "Test PASSED"
+        run 02-ptx-assembly "Device: NVIDIA H100" "Verification passed for all"
+        run 05-neural-network "Batch accuracy: 1.56%"
+        run 06-cnn-convolution "Results match: YES"
+        run 07-attention-mechanism "Maximum difference between standard and multi-head outputs: 1.106479e-01"
+        grep -q -F "Verification failed" 02-ptx-assembly.log && exit 1
+        [ "$(grep -c -F 'Verification passed for all' 02-ptx-assembly.log)" -ge 3 ] \
+          || { echo "::error::02-ptx-assembly: fewer than 3 passed verifications"; exit 1; }
